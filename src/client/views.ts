@@ -294,6 +294,13 @@ export function playView(ctx: Ctx): View {
   const picker = document.createElement('hex-color-picker') as PickerElement;
   picker.color = current;
   picker.className = 'picker';
+  // Belt and braces next to CSS `touch-action: none` (older iPhones ignore it): a
+  // touch that begins on the picker never scrolls or rubber-bands the page. The
+  // library attaches its own touchmove listener to the document, where browsers
+  // treat it as passive and ignore preventDefault, so we do it here, non-passive.
+  for (const type of ['touchstart', 'touchmove'] as const) {
+    picker.addEventListener(type, (e) => e.cancelable && e.preventDefault(), { passive: false });
+  }
 
   const setCurrent = (hex: string, fromInput = false) => {
     current = hex;

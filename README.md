@@ -70,6 +70,14 @@ npm run typecheck
    synced with a ping/pong exchange (the lowest-round-trip sample wins), so they stay accurate on a
    high-latency link. To test this yourself, put a phone on mobile data behind a VPN exit in
    another country.
+
+   **Touch screens:** the picker area never scrolls the page (CSS `touch-action: none` on the whole
+   picker plus a non-passive `touchstart`/`touchmove` handler for browsers that ignore it), the hue
+   slider has a 44 px touch area around its 24 px visible bar, and the page uses `100dvh` so iPhones
+   don't make a page scrollable that already fits. The picker is the `vanilla-colorful` web
+   component; if touch problems persist, the next step is replacing it with a pointer-events
+   picker (multi-touch safe), because the library follows `touches[0]`, the first finger on the
+   whole screen.
 4. After each round everyone sees all picks, ΔE, points and the standings. After the last round:
    podium and full table. The host can start another game.
 
