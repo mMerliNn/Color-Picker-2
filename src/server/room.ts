@@ -3,6 +3,7 @@ import { deltaE, generateColors, round2, scoreFromDeltaE } from '../shared/color
 import {
   DEFAULT_SETTINGS,
   MAX_PLAYERS,
+  UNLIMITED_SECONDS,
   type ErrorCode,
   type GameSettings,
   type Phase,
@@ -36,6 +37,9 @@ export const DEFAULT_TIMING: RoomTiming = {
   graceMs: 800,
   lobbyPurgeMs: 30_000,
 };
+
+/** In unlimited games a pick's recorded time is capped here (one hour). */
+export const MAX_UNLIMITED_TIME_MS = 60 * 60 * 1000;
 
 export interface Player {
   id: string; // public per-room id
@@ -72,7 +76,7 @@ export class Room {
   private colors: string[] = [];
   private roundIndex = -1;
   private roundStartedAt = 0;
-  private roundEndsAt = 0;
+  private roundEndsAt: number | null = null; // null = no time limit
   private startsAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastReveal: RevealMessage | null = null;
@@ -100,6 +104,22 @@ export class Room {
     return this.players.size;
   }
 
+  /** No time limit per round. Only allowed while a single player is connected. */
+  private get unlimited(): boolean {
+    return this.settings.roundSeconds === UNLIMITED_SECONDS;
+  }
+
+  /**
+   * An unlimited round only ends when everyone locks in, so with two or more
+   * players one of them could stall the others forever. If a second player
+   * shows up in a lobby set to unlimited, fall back to the default time.
+   */
+  private enforceSoloRule(): void {
+    if (this.phase === 'lobby' && this.unlimited && this.connectedCount() > 1) {
+      this.settings = { ...this.settings, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
+    }
+  }
+
   join(clientId: string, name: string, conn: Conn): JoinResult {
     this.touch();
     const existing = this.byClient.get(clientId);
@@ -113,6 +133,7 @@ export class Room {
       existing.conn = conn;
       this.cancelPurge(existing);
       this.ensureHost();
+      this.enforceSoloRule();
       this.broadcastState();
       this.catchUp(existing);
       return { ok: true, player: existing };
@@ -140,6 +161,7 @@ export class Room {
     this.players.set(player.id, player);
     this.byClient.set(clientId, player);
     this.ensureHost();
+    this.enforceSoloRule();
     this.broadcastState();
     return { ok: true, player };
   }
@@ -208,6 +230,9 @@ export class Room {
   setSettings(player: Player, patch: Partial<GameSettings>): ErrorResult | null {
     if (player.id !== this.hostId) return err('not_host', 'Only the host can change settings.');
     if (this.phase !== 'lobby') return err('wrong_phase', 'Settings are locked once the game starts.');
+    if (patch.roundSeconds === UNLIMITED_SECONDS && this.connectedCount() > 1) {
+      return err('solo_only', 'Unlimited time is only for solo games. Pick a time limit instead.');
+    }
     this.touch();
     this.settings = { ...this.settings, ...patch };
     this.broadcastState();
@@ -217,6 +242,9 @@ export class Room {
   start(player: Player): ErrorResult | null {
     if (player.id !== this.hostId) return err('not_host', 'Only the host can start the game.');
     if (this.phase !== 'lobby') return err('wrong_phase', 'The game has already started.');
+    if (this.unlimited && this.connectedCount() > 1) {
+      return err('solo_only', 'Unlimited time is only for solo games. Pick a time limit instead.');
+    }
     this.touch();
 
     const seed = randomInt(0, 2 ** 32);
@@ -292,10 +320,13 @@ export class Room {
   pick(player: Player, hex: string): ErrorResult | null {
     if (this.phase !== 'picking') return err('wrong_phase', 'No round is in progress.');
     const now = Date.now();
-    if (now > this.roundEndsAt + this.timing.graceMs) return err('wrong_phase', 'Too late.');
+    if (this.roundEndsAt !== null && now > this.roundEndsAt + this.timing.graceMs) {
+      return err('wrong_phase', 'Too late.');
+    }
     if (player.pick) return null; // first pick wins; duplicates are ignored
     this.touch();
-    const timeMs = Math.min(now - this.roundStartedAt, this.settings.roundSeconds * 1000);
+    const limitMs = this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
+    const timeMs = Math.min(now - this.roundStartedAt, limitMs);
     player.pick = { hex, timeMs };
     this.sendTo(player, { t: 'picked', hex });
     this.progress();
@@ -306,10 +337,15 @@ export class Room {
     this.phase = 'picking';
     this.roundIndex = index;
     this.roundStartedAt = Date.now();
-    this.roundEndsAt = this.roundStartedAt + this.settings.roundSeconds * 1000;
+    this.roundEndsAt = this.unlimited ? null : this.roundStartedAt + this.settings.roundSeconds * 1000;
     for (const p of this.players.values()) p.pick = null;
     this.each((p) => this.roundMessage(p));
-    this.schedule(this.settings.roundSeconds * 1000 + this.timing.graceMs, () => this.closeRound());
+    if (this.unlimited) {
+      // No deadline: the round ends when every connected player has locked in.
+      this.clearTimer();
+    } else {
+      this.schedule(this.settings.roundSeconds * 1000 + this.timing.graceMs, () => this.closeRound());
+    }
   }
 
   private submittedCount(): number {
@@ -347,7 +383,7 @@ export class Room {
         p.deltaEs.push(dE);
         p.totalTimeMs += timeMs;
       } else {
-        p.totalTimeMs += this.settings.roundSeconds * 1000;
+        p.totalTimeMs += this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
       }
       p.total += score;
       results.push({ id: p.id, name: p.name, pick: p.pick?.hex ?? null, deltaE: dE, score, timeMs });

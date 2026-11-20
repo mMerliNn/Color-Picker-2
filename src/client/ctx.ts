@@ -22,7 +22,7 @@ export interface RoundModel {
   index: number;
   total: number;
   color: string;
-  endsAt: number;
+  endsAt: number | null; // null = no time limit (solo "unlimited" mode)
   submitted: number;
   expected: number;
   youPick: string | null;

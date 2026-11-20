@@ -8,7 +8,9 @@ export const ROOM_CODE_LENGTH = 5;
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export const ROUND_OPTIONS = [5, 10] as const;
-export const SECONDS_OPTIONS = [15, 20, 30] as const;
+/** `roundSeconds` value meaning "no time limit". Only allowed in solo games. */
+export const UNLIMITED_SECONDS = 0;
+export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
 
 export interface GameSettings {
   rounds: number;
@@ -74,7 +76,7 @@ export type ServerMessage =
       index: number; // 0-based
       total: number;
       color: string;
-      endsAt: number;
+      endsAt: number | null; // null = no time limit (solo "unlimited" mode)
       submitted: number;
       expected: number;
       youPick: string | null; // set when re-sent after a reconnect
@@ -103,6 +105,7 @@ export type ErrorCode =
   | 'not_host'
   | 'not_in_room'
   | 'wrong_phase'
+  | 'solo_only'
   | 'rate_limited'
   | 'server_busy';
 

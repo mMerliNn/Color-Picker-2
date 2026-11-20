@@ -1,7 +1,7 @@
 # Color Match (multiplayer)
 
 Up to 30 players join a room with a 5-letter code and match the **same set of colors**
-(5 or 10 rounds, 15-30 s each). Scores are computed on the server from the CIEDE2000
+(5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**). Scores are computed on the server from the CIEDE2000
 color difference, and every pick is stored in SQLite. Each player has a personal
 **history analysis page** (`/stats`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
@@ -65,6 +65,15 @@ npm run typecheck
    podium and full table. The host can start another game.
 
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time.
+
+**Time per round:** 15, 20, 30 or 60 seconds, or **Unlimited (solo only)**. An unlimited round has no
+timer and ends when the player locks in. It exists only for single-player games: with two or more
+players one person could stall everyone, so the server refuses it (`solo_only`), the lobby disables
+the option while others are connected, and a lobby set to unlimited falls back to 20 seconds when a
+second player joins. A solo player who closes the tab mid-round can resume; the room is cleaned up
+after about 10 minutes with nobody connected. Unlimited games are stored with `round_seconds = 0`,
+and the time recorded for a pick is capped at one hour. They also count in the stats page, so long,
+careful picks show up in the "time taken" bands.
 
 **Reconnecting:** the browser keeps an anonymous id (`localStorage`) and the room code
 (`sessionStorage`). Refreshing or losing the connection puts you back in your seat, including

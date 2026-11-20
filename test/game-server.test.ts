@@ -416,3 +416,120 @@ describe('a full game', () => {
     void code;
   });
 });
+
+
+describe('time per round options', () => {
+  const target = (c: Client) => c.conn.last('round')!.color;
+
+  it('offers a 1 minute round and closes it after 60 seconds', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5, roundSeconds: 60 });
+    const [ann, bob] = clients as [Client, Client];
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(60);
+    start(ann);
+    const round = ann.conn.last('round')!;
+    expect(round.endsAt! - round.serverNow).toBe(60_000);
+    send(ann, { t: 'pick', hex: target(ann) });
+    vi.advanceTimersByTime(59_000);
+    expect(ann.conn.last('reveal')).toBeUndefined(); // still waiting for Bob
+    vi.advanceTimersByTime(1_800); // deadline + grace
+    expect(ann.conn.last('reveal')!.results.find((r) => r.name === 'Bob')!.pick).toBeNull();
+    expect(bob.conn.last('reveal')).toBeDefined();
+  });
+
+  it('only accepts known time options', () => {
+    const { clients } = lobby(['Ann']);
+    const ann = clients[0]!;
+    send(ann, { t: 'settings', settings: { roundSeconds: 45 } });
+    send(ann, { t: 'settings', settings: { roundSeconds: -1 } });
+    expect(ann.conn.all('error').map((e) => e.code)).toEqual(['bad_message', 'bad_message']);
+    send(ann, { t: 'settings', settings: { roundSeconds: 60 } });
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(60);
+  });
+});
+
+describe('unlimited time (solo only)', () => {
+  const target = (c: Client) => c.conn.last('round')!.color;
+  const HOUR = 60 * 60 * 1000;
+
+  it('has no deadline: the round waits for the player and then scores normally', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 0 });
+    const ann = clients[0]!;
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(0);
+    start(ann);
+    expect(ann.conn.last('round')!.endsAt).toBeNull();
+
+    vi.advanceTimersByTime(10 * 60_000); // ten minutes of thinking
+    expect(ann.conn.last('reveal')).toBeUndefined();
+    send(ann, { t: 'pick', hex: target(ann) });
+    expect(ann.conn.last('reveal')!.results[0]).toMatchObject({ score: 100, timeMs: 600_000 });
+
+    for (let i = 1; i < 5; i++) {
+      vi.advanceTimersByTime(7000);
+      expect(ann.conn.last('round')!.endsAt).toBeNull();
+      send(ann, { t: 'pick', hex: target(ann) });
+    }
+    vi.advanceTimersByTime(7000);
+    expect(ann.conn.last('final')!.standings[0]).toMatchObject({ total: 500, rank: 1 });
+
+    const [game] = store.listGames();
+    expect(game).toMatchObject({ round_seconds: 0, rounds: 5, player_count: 1 });
+    expect(game!.ended_at).not.toBeNull();
+  });
+
+  it('caps the recorded time at one hour', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 0 });
+    const ann = clients[0]!;
+    start(ann);
+    vi.advanceTimersByTime(2 * HOUR);
+    send(ann, { t: 'pick', hex: target(ann) });
+    expect(ann.conn.last('reveal')!.results[0]!.timeMs).toBe(HOUR);
+    const rows = store.picksForGame(store.listGames()[0]!.id as string);
+    expect(rows[0]!.time_ms).toBe(HOUR);
+  });
+
+  it('keeps waiting while the player is away and lets them resume', () => {
+    const { clients, code } = lobby(['Ann'], { rounds: 5, roundSeconds: 0 });
+    const ann = clients[0]!;
+    start(ann);
+    const color = target(ann);
+    server.disconnect(ann.session);
+    vi.advanceTimersByTime(30 * 60_000);
+    expect(ann.conn.last('reveal')).toBeUndefined();
+
+    const back = { ...connect('Ann'), clientId: ann.clientId };
+    join(back, code);
+    expect(back.conn.last('round')).toMatchObject({ color, index: 0, endsAt: null });
+    send(back, { t: 'pick', hex: color });
+    expect(back.conn.last('reveal')!.results[0]!.score).toBe(100);
+  });
+
+  it('falls back to the default time when a second player joins', () => {
+    const { clients, code } = lobby(['Ann'], { roundSeconds: 0 });
+    const ann = clients[0]!;
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(0);
+    const bob = connect('Bob');
+    join(bob, code);
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(20);
+    expect(bob.conn.last('state')!.settings.roundSeconds).toBe(20);
+  });
+
+  it('refuses to switch to unlimited while others are in the room', () => {
+    const { clients } = lobby(['Ann', 'Bob']);
+    const ann = clients[0]!;
+    send(ann, { t: 'settings', settings: { roundSeconds: 0 } });
+    expect(ann.conn.last('error')?.code).toBe('solo_only');
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(20);
+  });
+
+  it('is allowed again once everyone else has left or disconnected', () => {
+    const { clients } = lobby(['Ann', 'Bob', 'Cat']);
+    const [ann, bob, cat] = clients as [Client, Client, Client];
+    send(bob, { t: 'leave' });
+    server.disconnect(cat.session); // still listed for a while, but not connected
+    send(ann, { t: 'settings', settings: { roundSeconds: 0, rounds: 5 } });
+    expect(ann.conn.last('error')).toBeUndefined();
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(0);
+    start(ann); // the disconnected player is dropped, so this is a solo game
+    expect(ann.conn.last('round')!.endsAt).toBeNull();
+  });
+});

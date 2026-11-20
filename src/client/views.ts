@@ -1,10 +1,11 @@
 import 'vanilla-colorful/hex-color-picker.js';
-import { matchLabel } from '../shared/labels.js';
+import { formatClock, formatSeconds, matchLabel } from '../shared/labels.js';
 import {
   MAX_NAME_LENGTH,
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
   SECONDS_OPTIONS,
+  UNLIMITED_SECONDS,
   type Standing,
 } from '../shared/protocol.js';
 import type { Ctx, View } from './ctx.js';
@@ -149,7 +150,12 @@ export function lobbyView(ctx: Ctx): View {
   const roundsSel = h('select', { id: 'rounds' });
   for (const n of ROUND_OPTIONS) roundsSel.append(h('option', { value: n }, `${n} rounds`));
   const secondsSel = h('select', { id: 'seconds' });
-  for (const n of SECONDS_OPTIONS) secondsSel.append(h('option', { value: n }, `${n} seconds`));
+  const secondsOptions = new Map<number, HTMLOptionElement>();
+  for (const n of SECONDS_OPTIONS) {
+    const option = h('option', { value: n }, formatSeconds(n));
+    secondsOptions.set(n, option);
+    secondsSel.append(option);
+  }
   roundsSel.addEventListener('change', () => ctx.actions.setSettings({ rounds: Number(roundsSel.value) }));
   secondsSel.addEventListener('change', () => ctx.actions.setSettings({ roundSeconds: Number(secondsSel.value) }));
   const settings = h(
@@ -159,6 +165,11 @@ export function lobbyView(ctx: Ctx): View {
     roundsSel,
     h('label', { for: 'seconds' }, 'Time per round'),
     secondsSel,
+  );
+  const unlimitedHint = h(
+    'p',
+    { class: 'muted fine', hidden: true },
+    'No timer: each round ends when you lock in. Unlimited is for solo games; it switches back to 20 seconds if someone joins.',
   );
 
   const startBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Start game');
@@ -176,6 +187,7 @@ export function lobbyView(ctx: Ctx): View {
     count,
     list,
     settings,
+    unlimitedHint,
     startBtn,
     waiting,
     leaveBtn,
@@ -202,6 +214,11 @@ export function lobbyView(ctx: Ctx): View {
       }
       roundsSel.value = String(r.settings.rounds);
       secondsSel.value = String(r.settings.roundSeconds);
+      // Unlimited is solo-only: unavailable while anyone else is in the room.
+      const others = r.players.filter((p) => p.connected).length > 1;
+      const unlimitedOption = secondsOptions.get(UNLIMITED_SECONDS);
+      if (unlimitedOption) unlimitedOption.disabled = others;
+      unlimitedHint.hidden = r.settings.roundSeconds !== UNLIMITED_SECONDS;
       roundsSel.disabled = secondsSel.disabled = !isHost;
       startBtn.hidden = !isHost;
       waiting.hidden = isHost;
@@ -240,6 +257,7 @@ type PickerElement = HTMLElement & { color: string };
 
 export function playView(ctx: Ctx): View {
   const round = ctx.model.round!;
+  const unlimited = round.endsAt === null; // solo game without a time limit
   const totalMs = ctx.model.room!.settings.roundSeconds * 1000;
   let current = round.youPick ?? NEUTRAL;
   let locked = round.youPick !== null;
@@ -286,7 +304,7 @@ export function playView(ctx: Ctx): View {
   });
   hexInput.addEventListener('blur', () => (hexInput.value = current));
 
-  const timeLabel = h('span', { class: 'time-label', 'aria-hidden': 'true' });
+  const timeLabel = h('span', { class: `time-label${unlimited ? ' muted' : ''}`, 'aria-hidden': 'true' }, unlimited ? 'No time limit' : null);
   const bar = h('div', { class: 'timer-fill' });
   const progress = h('p', { class: 'muted center', role: 'status' });
   const submitBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Lock in');
@@ -315,7 +333,7 @@ export function playView(ctx: Ctx): View {
       h('h2', null, `Round ${round.index + 1} of ${round.total}`),
       timeLabel,
     ),
-    h('div', { class: 'timer', 'aria-hidden': 'true' }, bar),
+    h('div', { class: 'timer', 'aria-hidden': 'true', hidden: unlimited }, bar),
     h(
       'div',
       { class: 'stage' },
@@ -341,9 +359,10 @@ export function playView(ctx: Ctx): View {
       }
     },
     tick() {
+      if (round.endsAt === null) return; // no deadline: nothing to count down
       const remaining = round.endsAt - ctx.now();
       bar.style.width = `${Math.max(0, Math.min(100, (remaining / totalMs) * 100))}%`;
-      timeLabel.textContent = `${seconds(remaining)}s`;
+      timeLabel.textContent = formatClock(seconds(remaining));
       el.classList.toggle('urgent', remaining < 5000);
       // Lock in the chosen color just before time runs out.
       if (!locked && touched && remaining <= 400) submit();
