@@ -3,7 +3,10 @@ import { deltaE, round2, scoreFromDeltaE } from '../src/shared/colors.js';
 import { MAX_PLAYERS, type ServerMessage } from '../src/shared/protocol.js';
 import { GameStore } from '../src/server/db.js';
 import { GameServer, type Session } from '../src/server/game-server.js';
-import type { Conn } from '../src/server/room.js';
+import { DEFAULT_TIMING, type Conn } from '../src/server/room.js';
+
+/** How long after the deadline a late pick or draft is still accepted. */
+const GRACE = DEFAULT_TIMING.graceMs;
 
 class FakeConn implements Conn {
   msgs: ServerMessage[] = [];
@@ -259,7 +262,7 @@ describe('a full game', () => {
     start(ann);
     send(ann, { t: 'pick', hex: target(ann) });
     expect(ann.conn.last('reveal')).toBeUndefined(); // waiting for Bob
-    vi.advanceTimersByTime(15_000 + 800);
+    vi.advanceTimersByTime(15_000 + GRACE);
     const reveal = ann.conn.last('reveal')!;
     const bobResult = reveal.results.find((r) => r.name === 'Bob')!;
     expect(bobResult).toMatchObject({ pick: null, deltaE: null, score: 0, timeMs: null });
@@ -273,13 +276,13 @@ describe('a full game', () => {
     const [ann, bob] = clients as [Client, Client];
     start(ann);
     send(ann, { t: 'pick', hex: target(ann) });
-    vi.advanceTimersByTime(15_000 + 400); // past the deadline, inside grace
+    vi.advanceTimersByTime(15_000 + GRACE - 400); // past the deadline, inside grace
     send(bob, { t: 'pick', hex: target(bob) });
     expect(ann.conn.last('reveal')!.results.every((r) => r.score === 100)).toBe(true);
 
     vi.advanceTimersByTime(7000); // next round begins
     send(ann, { t: 'pick', hex: target(ann) });
-    vi.advanceTimersByTime(15_000 + 801);
+    vi.advanceTimersByTime(15_000 + GRACE + 1);
     send(bob, { t: 'pick', hex: target(bob) }); // too late
     expect(bob.conn.last('error')?.code).toBe('wrong_phase');
     expect(ann.conn.last('reveal')!.results.find((r) => r.name === 'Bob')!.pick).toBeNull();
@@ -431,7 +434,7 @@ describe('time per round options', () => {
     send(ann, { t: 'pick', hex: target(ann) });
     vi.advanceTimersByTime(59_000);
     expect(ann.conn.last('reveal')).toBeUndefined(); // still waiting for Bob
-    vi.advanceTimersByTime(1_800); // deadline + grace
+    vi.advanceTimersByTime(1_000 + GRACE); // 59 s + 1 s + grace = deadline + grace
     expect(ann.conn.last('reveal')!.results.find((r) => r.name === 'Bob')!.pick).toBeNull();
     expect(bob.conn.last('reveal')).toBeDefined();
   });
@@ -531,5 +534,132 @@ describe('unlimited time (solo only)', () => {
     expect(ann.conn.last('state')!.settings.roundSeconds).toBe(0);
     start(ann); // the disconnected player is dropped, so this is a solo game
     expect(ann.conn.last('round')!.endsAt).toBeNull();
+  });
+});
+
+
+describe('drafts: the color on screen counts if time runs out', () => {
+  const target = (c: Client) => c.conn.last('round')!.color;
+  const twoPlayers = () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5, roundSeconds: 15 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    return { ann, bob };
+  };
+  const bobResult = (ann: Client) => ann.conn.last('reveal')!.results.find((r) => r.name === 'Bob')!;
+
+  it('scores the latest draft when the round ends before the player locks in', () => {
+    const { ann, bob } = twoPlayers();
+    send(ann, { t: 'pick', hex: target(ann) });
+    send(bob, { t: 'draft', hex: '#112233' });
+    send(bob, { t: 'draft', hex: '#445566' }); // the later one wins
+    vi.advanceTimersByTime(15_000 + GRACE);
+    expect(bobResult(ann)).toMatchObject({ pick: '#445566', timeMs: 15_000 });
+    expect(bobResult(ann).score).toBeGreaterThan(0);
+    const rows = store.picksForGame(store.listGames()[0]!.id as string);
+    expect(rows.find((r) => r.player_name === 'Bob')).toMatchObject({ pick_hex: '#445566', time_ms: 15_000 });
+  });
+
+  it('is case-insensitive and still needs a valid color', () => {
+    const { ann, bob } = twoPlayers();
+    send(bob, { t: 'draft', hex: '#ABCDEF' });
+    send(bob, { t: 'draft', hex: 'not a color' });
+    send(bob, { t: 'draft', hex: '#12345' });
+    expect(bob.conn.all('error').map((e) => e.code)).toEqual(['bad_message', 'bad_message']);
+    send(ann, { t: 'pick', hex: target(ann) });
+    vi.advanceTimersByTime(15_000 + GRACE);
+    expect(bobResult(ann).pick).toBe('#abcdef'); // the invalid ones did not replace it
+  });
+
+  it('a real lock-in beats an earlier draft', () => {
+    const { ann, bob } = twoPlayers();
+    send(bob, { t: 'draft', hex: '#112233' });
+    send(bob, { t: 'pick', hex: target(bob) });
+    send(ann, { t: 'pick', hex: target(ann) });
+    expect(bobResult(ann)).toMatchObject({ pick: target(bob), score: 100 });
+  });
+
+  it('is not a lock-in: the round keeps waiting and the counter does not move', () => {
+    const { ann, bob } = twoPlayers();
+    send(bob, { t: 'draft', hex: '#112233' });
+    send(ann, { t: 'pick', hex: target(ann) });
+    expect(ann.conn.last('progress')).toEqual({ t: 'progress', submitted: 1, expected: 2 });
+    expect(ann.conn.last('reveal')).toBeUndefined();
+  });
+
+  it('still counts when it arrives late but inside the grace window, not after the round closed', () => {
+    const { ann, bob } = twoPlayers();
+    send(ann, { t: 'pick', hex: target(ann) });
+    send(bob, { t: 'draft', hex: '#111111' });
+    vi.advanceTimersByTime(15_000 + GRACE - 100); // 100 ms before the round closes
+    send(bob, { t: 'draft', hex: '#222222' });
+    vi.advanceTimersByTime(100); // round closes now
+    expect(bobResult(ann).pick).toBe('#222222');
+    send(bob, { t: 'draft', hex: '#333333' }); // too late
+    expect(bob.conn.last('error')).toBeUndefined(); // ignored quietly
+    expect(bobResult(ann).pick).toBe('#222222');
+  });
+
+  it('does not carry over to the next round', () => {
+    const { ann, bob } = twoPlayers();
+    send(bob, { t: 'draft', hex: '#112233' });
+    send(ann, { t: 'pick', hex: target(ann) });
+    vi.advanceTimersByTime(15_000 + GRACE); // round 1 ends, Bob's draft counts
+    expect(bobResult(ann).pick).toBe('#112233');
+    vi.advanceTimersByTime(7000); // round 2 begins
+    send(ann, { t: 'pick', hex: target(ann) });
+    vi.advanceTimersByTime(15_000 + GRACE);
+    expect(ann.conn.last('reveal')!.index).toBe(1);
+    expect(bobResult(ann)).toMatchObject({ pick: null, score: 0 }); // no draft this time: a miss
+  });
+
+  it('counts for a player who dropped off after choosing a color', () => {
+    const { ann, bob } = twoPlayers();
+    send(bob, { t: 'draft', hex: '#778899' });
+    server.disconnect(bob.session);
+    send(ann, { t: 'pick', hex: target(ann) }); // the only connected player: round ends
+    expect(bobResult(ann).pick).toBe('#778899');
+  });
+
+  it('is ignored quietly in the lobby and before a round starts', () => {
+    const { clients } = lobby(['Ann']);
+    send(clients[0]!, { t: 'draft', hex: '#112233' });
+    expect(clients[0]!.conn.last('error')).toBeUndefined();
+  });
+
+  it('never ends an unlimited round by itself', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 0 });
+    const ann = clients[0]!;
+    start(ann);
+    send(ann, { t: 'draft', hex: '#112233' });
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(ann.conn.last('reveal')).toBeUndefined();
+    send(ann, { t: 'pick', hex: target(ann) });
+    expect(ann.conn.last('reveal')!.results[0]).toMatchObject({ pick: target(ann), score: 100 });
+  });
+});
+
+describe('clock sync (ping / pong)', () => {
+  it('echoes the client timestamp together with the server time, even before joining a room', () => {
+    const c = connect('Ann');
+    send(c, { t: 'ping', c: 12345 });
+    expect(c.conn.last('pong')).toEqual({ t: 'pong', c: 12345, serverNow: Date.now() });
+  });
+
+  it('rejects malformed pings', () => {
+    const c = connect('Ann');
+    send(c, { t: 'ping' });
+    send(c, { t: 'ping', c: 'soon' });
+    send(c, { t: 'ping', c: Number.POSITIVE_INFINITY });
+    expect(c.conn.all('error').every((e) => e.code === 'bad_message')).toBe(true);
+    expect(c.conn.all('pong')).toHaveLength(0);
+  });
+
+  it('works during a game', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 15 });
+    start(clients[0]!);
+    vi.advanceTimersByTime(4000);
+    send(clients[0]!, { t: 'ping', c: 1 });
+    expect(clients[0]!.conn.last('pong')!.serverNow).toBe(Date.now());
   });
 });

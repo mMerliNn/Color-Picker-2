@@ -59,8 +59,17 @@ npm run typecheck
    color per hue sector, shuffled) so every game covers the whole wheel; this matters for the
    per-hue statistics later.
 3. Each round the server sends only that round's color plus a deadline. Players lock in a pick;
-   the round ends when everyone connected has locked in, or at the deadline (plus 0.8 s grace for
-   lag). Missed rounds score 0. A color the player never touched is not auto-submitted.
+   the round ends when everyone connected has locked in, or at the deadline plus a 1.5 s grace
+   window for lag (the same for everyone). Missed rounds score 0.
+
+   **Slow or far-away connections:** while a player is still choosing, their browser sends the color
+   on screen to the server as a *draft* (at most 4 times a second; never shown to others). If the
+   round ends before they lock in, the server scores their latest draft, as if they had locked in
+   at the buzzer, so a late timer or a lagging phone can't turn a chosen color into a miss. A color
+   the player never touched is never sent, so doing nothing still scores 0. Countdowns use a clock
+   synced with a ping/pong exchange (the lowest-round-trip sample wins), so they stay accurate on a
+   high-latency link. To test this yourself, put a phone on mobile data behind a VPN exit in
+   another country.
 4. After each round everyone sees all picks, ΔE, points and the standings. After the last round:
    podium and full table. The host can start another game.
 

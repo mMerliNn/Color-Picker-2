@@ -51,6 +51,12 @@ export type ClientMessage =
   | { t: 'settings'; settings: Partial<GameSettings> }
   | { t: 'start' }
   | { t: 'pick'; hex: string }
+  // The color the player currently has on screen while still choosing. If the
+  // round ends before they lock in, the server uses the latest draft, so a slow
+  // connection or a late timer can no longer turn a pick into a miss.
+  | { t: 'draft'; hex: string }
+  // Clock sync: the server echoes `c` back with its own time (see 'pong').
+  | { t: 'ping'; c: number }
   | { t: 'again' }
   | { t: 'leave' };
 
@@ -59,6 +65,10 @@ export type ClientMessage =
 export type Phase = 'lobby' | 'starting' | 'picking' | 'reveal' | 'final';
 
 export type ServerMessage =
+  // Reply to a client 'ping'. The client measures the round trip and works out
+  // how far its clock is from the server's, so countdowns are accurate even on
+  // a slow or far-away connection.
+  | { t: 'pong'; c: number; serverNow: number }
   | {
       t: 'state'; // sent on join / reconnect and whenever the lobby changes
       serverNow: number;
@@ -176,6 +186,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     }
     case 'pick':
       return isHex(m.hex) ? { t: 'pick', hex: m.hex.toLowerCase() } : null;
+    case 'draft':
+      return isHex(m.hex) ? { t: 'draft', hex: m.hex.toLowerCase() } : null;
+    case 'ping':
+      return typeof m.c === 'number' && Number.isFinite(m.c) ? { t: 'ping', c: m.c } : null;
     case 'start':
     case 'again':
     case 'leave':

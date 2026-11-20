@@ -28,8 +28,37 @@ const model: Model = {
   busy: false,
 };
 
+// Server clock estimate. Each ping/pong gives a sample; the sample with the
+// smallest round trip is the most trustworthy (least delay asymmetry), so that
+// one wins. Before the first pong we fall back to timestamps on other messages.
+interface ClockSample {
+  rtt: number;
+  offset: number;
+}
+const clockSamples: ClockSample[] = [];
+let clockSynced = false;
 let clockOffset = 0;
 const now = () => Date.now() + clockOffset;
+
+function onPong(msg: Extract<ServerMessage, { t: 'pong' }>): void {
+  const received = Date.now();
+  const rtt = received - msg.c;
+  if (!(rtt >= 0 && rtt < 10_000)) return; // nonsense (clock jump): ignore
+  // The server stamped its time about half a round trip ago.
+  clockSamples.push({ rtt, offset: msg.serverNow + rtt / 2 - received });
+  if (clockSamples.length > 8) clockSamples.shift();
+  const best = clockSamples.reduce((a, b) => (b.rtt < a.rtt ? b : a));
+  clockOffset = best.offset;
+  clockSynced = true;
+}
+
+/** Silent (no toast if the socket is down): a missed ping just means a later one fixes it. */
+function sendPing(): void {
+  conn.send({ t: 'ping', c: Date.now() });
+}
+setInterval(() => {
+  if (conn.isOpen()) sendPing();
+}, 5000);
 
 const banner = document.getElementById('banner') as HTMLElement;
 const toast = document.getElementById('toast') as HTMLElement;
@@ -49,6 +78,10 @@ const conn = new Connection({
   onStatus(status: Status) {
     model.status = status;
     if (status === 'open') {
+      // Sync the clock straight away (a few samples, the best one is used).
+      sendPing();
+      setTimeout(sendPing, 500);
+      setTimeout(sendPing, 1500);
       // Resume the saved room after a reload or a dropped connection.
       const code = readStore(session, 'room');
       if (code && model.name) conn.send({ t: 'join', clientId, name: model.name, code });
@@ -72,12 +105,17 @@ const conn = new Connection({
 
 function send(msg: Parameters<Connection['send']>[0]): boolean {
   const ok = conn.send(msg);
-  if (!ok) notify('Not connected yet. Retrying窶ｦ');
+  if (!ok) notify('Not connected yet. Retrying…');
   return ok;
 }
 
 function handleMessage(msg: ServerMessage): void {
-  if ('serverNow' in msg) clockOffset = msg.serverNow - Date.now();
+  if (msg.t === 'pong') {
+    onPong(msg);
+    return;
+  }
+  // Rough estimate (ignores travel time) until the first ping/pong has measured the real one.
+  if ('serverNow' in msg && !clockSynced) clockOffset = msg.serverNow - Date.now();
 
   switch (msg.t) {
     case 'state':
@@ -105,6 +143,7 @@ function handleMessage(msg: ServerMessage): void {
       break;
 
     case 'round':
+      sendPing(); // refresh the clock estimate at the start of every round
       if (model.room) model.room.phase = 'picking';
       model.round = {
         index: msg.index,
@@ -167,6 +206,7 @@ const actions: Actions = {
   start: () => void send({ t: 'start' }),
   setSettings: (settings) => void send({ t: 'settings', settings }),
   pick: (hex) => send({ t: 'pick', hex }),
+  draft: (hex) => conn.send({ t: 'draft', hex }),
   again: () => void send({ t: 'again' }),
   leave() {
     send({ t: 'leave' });
@@ -225,14 +265,14 @@ function render(): void {
   } else {
     current?.update?.();
   }
-  document.title = model.room ? `Color Match ﾂｷ ${model.room.code}` : 'Color Match';
+  document.title = model.room ? `Color Match · ${model.room.code}` : 'Color Match';
   renderBanner();
 }
 
 function renderBanner(): void {
   const lost = model.status !== 'open';
   banner.hidden = !lost;
-  banner.textContent = model.status === 'connecting' ? 'Connecting窶ｦ' : 'Connection lost. Reconnecting窶ｦ';
+  banner.textContent = model.status === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…';
 }
 
 setInterval(() => current?.tick?.(), 100);

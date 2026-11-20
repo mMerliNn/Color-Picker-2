@@ -9,7 +9,7 @@ import {
   type Standing,
 } from '../shared/protocol.js';
 import type { Ctx, View } from './ctx.js';
-import { clear, h, swatch } from './dom.js';
+import { clear, h, setText, swatch } from './dom.js';
 import { profileQuery } from './identity.js';
 
 const NEUTRAL = '#808080';
@@ -244,7 +244,7 @@ export function countdownView(ctx: Ctx): View {
   return {
     el,
     tick() {
-      number.textContent = String(Math.max(1, seconds(ctx.model.startsAt - ctx.now())));
+      setText(number, String(Math.max(1, seconds(ctx.model.startsAt - ctx.now()))));
     },
   };
 }
@@ -264,6 +264,21 @@ export function playView(ctx: Ctx): View {
   // Only a color the player actually chose is auto-submitted at the deadline.
   // Otherwise the untouched starting gray would score points for doing nothing.
   let touched = locked;
+
+  // Drafts: while the player is still choosing, keep the server informed of the
+  // color on screen (at most 4 times a second). If time runs out first, the
+  // server uses the latest draft, so a slow connection or a late timer on a
+  // phone can no longer turn a color they chose into a miss.
+  let lastDraft: string | null = null;
+  let draftTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushDraft = () => {
+    draftTimer = null;
+    if (locked || !touched || current === lastDraft) return;
+    if (ctx.actions.draft(current)) lastDraft = current; // not sent (offline)? retried on the next change
+  };
+  const queueDraft = () => {
+    if (!locked && touched && !draftTimer) draftTimer = setTimeout(flushDraft, 250);
+  };
 
   const target = swatch(round.color, 'Target color', 'target');
   const mine = swatch(current, 'Your color');
@@ -285,9 +300,14 @@ export function playView(ctx: Ctx): View {
     mine.style.backgroundColor = hex;
     mine.setAttribute('aria-label', `Your color: ${hex}`);
     if (!fromInput) hexInput.value = hex;
+    queueDraft();
   };
+  // The picker fires this only when the user actually moves it (never for
+  // programmatic changes), so it is a reliable "the player chose this color".
   picker.addEventListener('color-changed', (e) => {
-    if (!locked) setCurrent((e as CustomEvent<{ value: string }>).detail.value);
+    if (locked) return;
+    touched = true;
+    setCurrent((e as CustomEvent<{ value: string }>).detail.value);
   });
   const markTouched = () => {
     touched = true;
@@ -311,6 +331,8 @@ export function playView(ctx: Ctx): View {
 
   const lock = () => {
     locked = true;
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = null;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Locked in ✓';
     picker.setAttribute('inert', '');
@@ -352,18 +374,22 @@ export function playView(ctx: Ctx): View {
     update() {
       const r = ctx.model.round;
       if (!r) return;
-      progress.textContent = `${r.submitted} of ${r.expected} locked in`;
+      setText(progress, `${r.submitted} of ${r.expected} locked in`);
       if (r.youPick && !locked) {
         round.youPick = r.youPick;
         lock();
       }
+      queueDraft(); // after a reconnect: resend the draft if the last one never got through
     },
     tick() {
       if (round.endsAt === null) return; // no deadline: nothing to count down
       const remaining = round.endsAt - ctx.now();
-      bar.style.width = `${Math.max(0, Math.min(100, (remaining / totalMs) * 100))}%`;
-      timeLabel.textContent = formatClock(seconds(remaining));
-      el.classList.toggle('urgent', remaining < 5000);
+      // The bar moves by transform (cheap); text and class change only when their value does.
+      const fraction = Math.max(0, Math.min(1, remaining / totalMs));
+      bar.style.transform = `scaleX(${fraction.toFixed(3)})`;
+      setText(timeLabel, formatClock(seconds(remaining)));
+      const urgent = remaining < 5000;
+      if (urgent !== el.classList.contains('urgent')) el.classList.toggle('urgent', urgent);
       // Lock in the chosen color just before time runs out.
       if (!locked && touched && remaining <= 400) submit();
     },
@@ -452,7 +478,7 @@ export function revealView(ctx: Ctx): View {
     el,
     tick() {
       const s = seconds(rv.nextAt - ctx.now());
-      countdown.textContent = `${isLast ? 'Final results' : 'Next round'} in ${s}s`;
+      setText(countdown, `${isLast ? 'Final results' : 'Next round'} in ${s}s`);
     },
   };
 }

@@ -48,6 +48,8 @@ export interface Actions {
   start(): void;
   setSettings(patch: Partial<GameSettings>): void;
   pick(hex: string): boolean;
+  /** Tell the server the color on screen (used if time runs out first). Silent: no error toast. */
+  draft(hex: string): boolean;
   again(): void;
   leave(): void;
   notify(message: string): void;

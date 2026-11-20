@@ -307,7 +307,11 @@ button:focus-visible {
   height: 100%;
   width: 100%;
   background: var(--accent);
-  transition: width 0.1s linear;
+  /* Shrinks by transform (handled by the GPU) instead of width, so the
+     countdown doesn't trigger page layout ten times a second. */
+  transform-origin: left center;
+  transition: transform 0.1s linear;
+  will-change: transform;
 }
 .play.urgent .timer-fill {
   background: var(--danger);
@@ -469,12 +473,19 @@ button:focus-visible {
 
 /* ---- chrome ------------------------------------------------------------- */
 
+/* The connection banner and the toast float over the page and let touches pass
+   through. They used to take part in the layout (the banner pushed the whole
+   page down whenever the connection flapped), which could move the picker
+   under a finger in the middle of a drag. */
 .banner {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
   z-index: 10;
   text-align: center;
-  padding: 8px 12px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
   background: var(--danger);
   color: #fff;
   font-size: 0.9rem;
@@ -493,6 +504,7 @@ button:focus-visible {
   font-size: 0.95rem;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   z-index: 20;
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -25,7 +25,11 @@ export interface RoomTiming {
   startDelayMs: number;
   /** How long each round's results stay on screen. */
   revealMs: number;
-  /** Extra time after the deadline in which a late (laggy) pick is accepted. */
+  /**
+   * Extra time after the deadline in which a late pick or draft is still
+   * accepted. The same for everyone (a per-player allowance could be gamed by
+   * pretending to be laggy). Generous enough for a phone on a far-away network.
+   */
   graceMs: number;
   /** A disconnected lobby player is dropped after this long. */
   lobbyPurgeMs: number;
@@ -34,7 +38,7 @@ export interface RoomTiming {
 export const DEFAULT_TIMING: RoomTiming = {
   startDelayMs: 3000,
   revealMs: 7000,
-  graceMs: 800,
+  graceMs: 1500,
   lobbyPurgeMs: 30_000,
 };
 
@@ -51,6 +55,8 @@ export interface Player {
   totalTimeMs: number;
   deltaEs: number[];
   pick: { hex: string; timeMs: number } | null;
+  /** Latest color the player had on screen without locking in (never shown to others). */
+  draft: string | null;
   purgeTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -156,6 +162,7 @@ export class Room {
       totalTimeMs: 0,
       deltaEs: [],
       pick: null,
+      draft: null,
       purgeTimer: null,
     };
     this.players.set(player.id, player);
@@ -255,6 +262,7 @@ export class Room {
       p.totalTimeMs = 0;
       p.deltaEs = [];
       p.pick = null;
+      p.draft = null;
       this.cancelPurge(p);
     }
     // Players who are not connected at the start are not part of this game.
@@ -296,6 +304,7 @@ export class Room {
         p.totalTimeMs = 0;
         p.deltaEs = [];
         p.pick = null;
+        p.draft = null;
       }
     }
     this.phase = 'lobby';
@@ -333,12 +342,28 @@ export class Room {
     return null;
   }
 
+  /**
+   * Remember the color a player has on screen but has not locked in yet. It is
+   * only used if the round ends first. Drafts are frequent and not worth an
+   * error reply, so anything unusable (wrong phase, already locked in, too
+   * late) is ignored silently.
+   */
+  draft(player: Player, hex: string): ErrorResult | null {
+    if (this.phase !== 'picking' || player.pick) return null;
+    if (this.roundEndsAt !== null && Date.now() > this.roundEndsAt + this.timing.graceMs) return null;
+    player.draft = hex;
+    return null;
+  }
+
   private beginRound(index: number): void {
     this.phase = 'picking';
     this.roundIndex = index;
     this.roundStartedAt = Date.now();
     this.roundEndsAt = this.unlimited ? null : this.roundStartedAt + this.settings.roundSeconds * 1000;
-    for (const p of this.players.values()) p.pick = null;
+    for (const p of this.players.values()) {
+      p.pick = null;
+      p.draft = null;
+    }
     this.each((p) => this.roundMessage(p));
     if (this.unlimited) {
       // No deadline: the round ends when every connected player has locked in.
@@ -372,28 +397,33 @@ export class Room {
     const results: RoundResult[] = [];
     const records: PickRecord[] = [];
 
+    const fullRoundMs = this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
+
     for (const p of this.sortedPlayers()) {
+      // Time ran out while the player was still choosing: their last draft counts,
+      // as if they had locked in at the buzzer. Never a "miss" for a color they chose.
+      const pick = p.pick ?? (p.draft ? { hex: p.draft, timeMs: fullRoundMs } : null);
       let dE: number | null = null;
       let score = 0;
       let timeMs: number | null = null;
-      if (p.pick) {
-        dE = round2(deltaE(target, p.pick.hex));
+      if (pick) {
+        dE = round2(deltaE(target, pick.hex));
         score = scoreFromDeltaE(dE);
-        timeMs = p.pick.timeMs;
+        timeMs = pick.timeMs;
         p.deltaEs.push(dE);
         p.totalTimeMs += timeMs;
       } else {
-        p.totalTimeMs += this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
+        p.totalTimeMs += fullRoundMs;
       }
       p.total += score;
-      results.push({ id: p.id, name: p.name, pick: p.pick?.hex ?? null, deltaE: dE, score, timeMs });
+      results.push({ id: p.id, name: p.name, pick: pick?.hex ?? null, deltaE: dE, score, timeMs });
       records.push({
         gameId: this.gameId as string,
         round: index,
         clientId: p.clientId,
         playerName: p.name,
         targetHex: target,
-        pickHex: p.pick?.hex ?? null,
+        pickHex: pick?.hex ?? null,
         deltaE: dE,
         score,
         timeMs,

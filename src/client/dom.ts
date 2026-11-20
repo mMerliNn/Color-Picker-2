@@ -58,6 +58,11 @@ export function s<K extends keyof SVGElementTagNameMap>(
   return el;
 }
 
+/** Set text only when it changed, so timers that run 10 times a second don't force needless layout work. */
+export function setText(el: Element, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
+}
+
 export function clear(el: Element): void {
   while (el.firstChild) el.removeChild(el.firstChild);
 }

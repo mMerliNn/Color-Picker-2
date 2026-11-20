@@ -128,6 +128,15 @@ export class GameServer {
         this.leaveCurrent(session);
         return;
 
+      case 'ping':
+        // Clock sync; works before joining a room. Never fails, never needs a reply error.
+        try {
+          session.conn.send({ t: 'pong', c: msg.c, serverNow: Date.now() });
+        } catch {
+          /* socket already gone */
+        }
+        return;
+
       default: {
         const { room, player } = session;
         if (!room || !player) {
@@ -138,6 +147,7 @@ export class GameServer {
         if (msg.t === 'settings') failure = room.setSettings(player, msg.settings);
         else if (msg.t === 'start') failure = room.start(player);
         else if (msg.t === 'pick') failure = room.pick(player, msg.hex);
+        else if (msg.t === 'draft') failure = room.draft(player, msg.hex);
         else if (msg.t === 'again') failure = room.again(player);
         if (failure) this.error(session, failure.code, failure.message);
       }
