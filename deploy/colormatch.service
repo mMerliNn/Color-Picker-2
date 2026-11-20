@@ -1,0 +1,31 @@
+# /etc/systemd/system/colormatch.service
+[Unit]
+Description=Color Match game server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/colormatch
+ExecStart=/usr/bin/node dist/server/server/index.js
+Restart=always
+RestartSec=2
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=STATIC_DIR=/opt/colormatch/dist/client
+Environment=DB_FILE=/var/lib/colormatch/colormatch.db
+# Only accept websocket connections coming from your own site:
+Environment=ALLOWED_ORIGINS=https://colorpick.fun
+
+# Runs as a throwaway, unprivileged user. StateDirectory creates
+# /var/lib/colormatch for it: the only place it may write (the SQLite database).
+DynamicUser=yes
+StateDirectory=colormatch
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

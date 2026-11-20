@@ -1,0 +1,12 @@
+# /etc/caddy/Caddyfile
+# Caddy gets and renews the HTTPS certificate by itself, and proxies websocket
+# traffic (/ws) with no extra configuration. Replace colorpick.fun with your domain.
+
+colorpick.fun {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+www.colorpick.fun {
+	redir https://colorpick.fun{uri} permanent
+}

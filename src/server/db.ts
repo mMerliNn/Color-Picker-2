@@ -1,0 +1,234 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { toLch } from '../shared/colors.js';
+
+/**
+ * Persistent log of every game and every pick.
+ *
+ * Raw data is stored (target and picked hex, time, scores) together with the
+ * LCH breakdown of both colors, so a future "history analysis" page can answer
+ * questions like "error by hue" or "do I pick too light?" with plain SQL and no
+ * recomputation. `client_id` is the player's anonymous, private identity.
+ */
+
+export interface GameRecord {
+  id: string;
+  roomCode: string;
+  seed: number;
+  rounds: number;
+  roundSeconds: number;
+  playerCount: number;
+  startedAt: number;
+}
+
+export interface PickRecord {
+  gameId: string;
+  round: number; // 0-based
+  clientId: string;
+  playerName: string;
+  targetHex: string;
+  pickHex: string | null; // null = missed the round
+  deltaE: number | null;
+  score: number;
+  timeMs: number | null;
+}
+
+/** One stored pick, as read back for the analysis page. */
+export interface PickRow {
+  game_id: string;
+  round: number;
+  pick_hex: string | null;
+  delta_e: number | null;
+  score: number;
+  time_ms: number | null;
+  target_l: number;
+  target_c: number;
+  target_h: number | null;
+  pick_l: number | null;
+  pick_c: number | null;
+  pick_h: number | null;
+  created_at: number;
+}
+
+export interface GlobalBin {
+  bin: number;
+  n: number;
+  avg: number;
+}
+
+const SCHEMA_VERSION = 1;
+
+export class GameStore {
+  private readonly db: DatabaseSync;
+
+  constructor(file: string) {
+    if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
+    this.db = new DatabaseSync(file);
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.db.exec('PRAGMA synchronous = NORMAL');
+    this.migrate();
+  }
+
+  private migrate(): void {
+    const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
+    if (row.user_version >= SCHEMA_VERSION) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS games (
+        id            TEXT PRIMARY KEY,
+        room_code     TEXT NOT NULL,
+        seed          INTEGER NOT NULL,
+        rounds        INTEGER NOT NULL,
+        round_seconds INTEGER NOT NULL,
+        player_count  INTEGER NOT NULL,
+        started_at    INTEGER NOT NULL,
+        ended_at      INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS picks (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id     TEXT NOT NULL REFERENCES games(id),
+        round       INTEGER NOT NULL,
+        client_id   TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        target_hex  TEXT NOT NULL,
+        pick_hex    TEXT,
+        delta_e     REAL,
+        score       INTEGER NOT NULL,
+        time_ms     INTEGER,
+        target_l    REAL NOT NULL,
+        target_c    REAL NOT NULL,
+        target_h    REAL,
+        pick_l      REAL,
+        pick_c      REAL,
+        pick_h      REAL,
+        created_at  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS picks_by_client ON picks (client_id, created_at);
+      CREATE INDEX IF NOT EXISTS picks_by_game ON picks (game_id, round);
+      PRAGMA user_version = ${SCHEMA_VERSION};
+    `);
+  }
+
+  startGame(game: GameRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO games (id, room_code, seed, rounds, round_seconds, player_count, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        game.id,
+        game.roomCode,
+        game.seed,
+        game.rounds,
+        game.roundSeconds,
+        game.playerCount,
+        game.startedAt,
+      );
+  }
+
+  /** Log all picks of one round (including misses) atomically. */
+  logRound(picks: PickRecord[], now: number): void {
+    const insert = this.db.prepare(
+      `INSERT INTO picks (game_id, round, client_id, player_name, target_hex, pick_hex, delta_e,
+                          score, time_ms, target_l, target_c, target_h, pick_l, pick_c, pick_h,
+                          created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.db.exec('BEGIN');
+    try {
+      for (const p of picks) {
+        const target = toLch(p.targetHex);
+        const pick = p.pickHex ? toLch(p.pickHex) : null;
+        insert.run(
+          p.gameId,
+          p.round,
+          p.clientId,
+          p.playerName,
+          p.targetHex,
+          p.pickHex,
+          p.deltaE,
+          p.score,
+          p.timeMs,
+          target.l,
+          target.c,
+          target.h,
+          pick?.l ?? null,
+          pick?.c ?? null,
+          pick?.h ?? null,
+          now,
+        );
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  finishGame(id: string, endedAt: number): void {
+    this.db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(endedAt, id);
+  }
+
+  // -- read helpers (used by tests now, by the analysis page later) ----------
+
+  picksForGame(gameId: string): Record<string, unknown>[] {
+    return this.db
+      .prepare('SELECT * FROM picks WHERE game_id = ? ORDER BY round, id')
+      .all(gameId) as Record<string, unknown>[];
+  }
+
+  /** A player's most recent picks (misses included), newest first. */
+  picksForClient(clientId: string, limit = 3000): PickRow[] {
+    return this.db
+      .prepare(
+        `SELECT game_id, round, pick_hex, delta_e, score, time_ms,
+                target_l, target_c, target_h, pick_l, pick_c, pick_h, created_at
+         FROM picks WHERE client_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      )
+      .all(clientId, limit) as unknown as PickRow[];
+  }
+
+  /**
+   * Average error of everyone, per 30-degree hue sector of the target. Simulated
+   * players (client ids starting with "bot-") are left out.
+   */
+  globalHueBins(): { bins: GlobalBin[]; overall: { n: number; avg: number | null } } {
+    const bins = this.db
+      .prepare(
+        `SELECT MIN(11, CAST(target_h / 30 AS INTEGER)) AS bin, COUNT(*) AS n, AVG(delta_e) AS avg
+         FROM picks
+         WHERE pick_hex IS NOT NULL AND target_h IS NOT NULL AND client_id NOT LIKE 'bot-%'
+         GROUP BY bin`,
+      )
+      .all() as unknown as GlobalBin[];
+    const overall = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, AVG(delta_e) AS avg FROM picks
+         WHERE pick_hex IS NOT NULL AND client_id NOT LIKE 'bot-%'`,
+      )
+      .get() as unknown as { n: number; avg: number | null };
+    return { bins, overall };
+  }
+
+  /** Delete everything stored about one player. Returns the number of picks removed. */
+  deleteClientData(clientId: string): number {
+    const result = this.db.prepare('DELETE FROM picks WHERE client_id = ?').run(clientId);
+    return Number(result.changes);
+  }
+
+  listGames(): Record<string, unknown>[] {
+    return this.db.prepare('SELECT * FROM games ORDER BY started_at, id').all() as Record<
+      string,
+      unknown
+    >[];
+  }
+
+  countPicks(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM picks').get() as { n: number };
+    return row.n;
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
