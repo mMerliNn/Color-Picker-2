@@ -136,6 +136,23 @@ Simulated bots (`bot-...` ids) are excluded from the "everyone" numbers. The API
 Limitation: anyone who obtains a player's id (for example from their browser) can read that player's
 history; this is the price of having no accounts. Clearing browser data starts a fresh history.
 
+## Checking who has played (for you, the admin)
+
+On the server, one command makes a fresh backup and prints a report from it:
+
+```bash
+colormatch-report        # last 7 days
+colormatch-report 30     # last 30 days
+```
+
+It shows an overview (players, new and active players, games, unlimited-time games), new players
+in the period, all players (names, games, finished games, rounds, missed rounds, average ΔE,
+points, first/last seen), recent games and activity per day. Times are UTC. A "player" is one
+browser, not a person, and names are whatever people typed. Only the first 6 characters of each
+private id are shown. The script is `deploy/colormatch-report.sh`; `deploy.sh` installs it as
+`/usr/local/bin/colormatch-report`. It reads the backup copy, never the live database, and it asks
+for your sudo password because the database folder is root-only.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Meaning |
