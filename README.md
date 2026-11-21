@@ -43,6 +43,9 @@ $env:DB_FILE = 'data/demo.db'; npm start
 # then open http://localhost:3000/stats
 ```
 
+To check the round review without playing, run `npm run dev:client` and open
+`http://localhost:5173/mockup-review.html` (two sample games and the saved image; dev only).
+
 To act as several players in **one** browser, add `?profile=2`, `?profile=3`, ... to the URL;
 each profile gets its own stored identity. Normal players never need this.
 
@@ -80,6 +83,14 @@ npm run typecheck
    whole screen.
 4. After each round everyone sees all picks, ΔE, points and the standings. After the last round:
    podium and full table. The host can start another game.
+5. **Review my rounds** (final screen, or tap a color chip to open it at that round): one row per
+   round with the target beside your pick, points and ΔE, and three mini sliders for **hue,
+   saturation and brightness**. Each slider shows the target as a "⌶" (the stem is the exact
+   value, the caps span the ±5 "good" range) and your pick as a dot, so you can see which way you
+   were off and by how much. A tip at the top sums up the game ("You tend to pick colors too
+   muted."). **Save as image** draws the same review into a PNG (the share sheet on phones, a
+   download elsewhere). The bars use HSV, the same model as the picker; scoring still uses ΔE.
+   The server sends each player only their own rounds (`yourRounds` in the `final` message).
 
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time.
 
@@ -236,9 +247,10 @@ and each connection is rate limited.
 ## Project layout
 
 ```
-src/shared/    protocol.ts (messages + validation), colors.ts (seeded colors, ΔE, scoring), labels.ts, stats.ts (stats types)
+src/shared/    protocol.ts (messages + validation), colors.ts (seeded colors, ΔE, scoring), review.ts (round review: HSV bars, tip), labels.ts, stats.ts (stats types)
 src/server/    room.ts (game state machine), game-server.ts (rooms, rate limits), db.ts, stats.ts (analysis), app.ts (http, ws, /api)
-src/client/    main.ts + views.ts (the game), stats.ts + charts.ts (the stats page), identity.ts, net.ts, dom.ts, styles.css
+src/client/    main.ts + views.ts (the game), review.ts (review sheet + saved image), stats.ts + charts.ts (the stats page), identity.ts, net.ts, dom.ts, styles.css
+               mockup-review.* (dev-only preview of the review with sample data)
 test/          unit tests (fake clock), stats tests, API tests, and a real-websocket 30-player game
 scripts/       simulate.ts (bots), seed-demo.ts (fake history for the stats page)
 deploy/        Caddyfile, systemd unit, deploy.sh

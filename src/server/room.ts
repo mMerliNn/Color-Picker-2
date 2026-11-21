@@ -9,6 +9,7 @@ import {
   type Phase,
   type PlayerInfo,
   type RoundResult,
+  type RoundReview,
   type ServerMessage,
   type Standing,
 } from '../shared/protocol.js';
@@ -54,6 +55,8 @@ export interface Player {
   total: number;
   totalTimeMs: number;
   deltaEs: number[];
+  /** This game's rounds as this player played them, for their own review at the end. */
+  rounds: RoundReview[];
   pick: { hex: string; timeMs: number } | null;
   /** Latest color the player had on screen without locking in (never shown to others). */
   draft: string | null;
@@ -65,7 +68,8 @@ export type JoinResult =
   | { ok: false; code: ErrorCode; message: string };
 
 type RevealMessage = Extract<ServerMessage, { t: 'reveal' }>;
-type FinalMessage = Extract<ServerMessage, { t: 'final' }>;
+/** The part of the final results that is the same for everyone; each player also gets their own rounds. */
+type FinalMessage = Omit<Extract<ServerMessage, { t: 'final' }>, 'yourRounds'>;
 
 export class Room {
   readonly code: string;
@@ -161,6 +165,7 @@ export class Room {
       total: 0,
       totalTimeMs: 0,
       deltaEs: [],
+      rounds: [],
       pick: null,
       draft: null,
       purgeTimer: null,
@@ -261,6 +266,7 @@ export class Room {
       p.total = 0;
       p.totalTimeMs = 0;
       p.deltaEs = [];
+      p.rounds = [];
       p.pick = null;
       p.draft = null;
       this.cancelPurge(p);
@@ -303,6 +309,7 @@ export class Room {
         p.total = 0;
         p.totalTimeMs = 0;
         p.deltaEs = [];
+        p.rounds = [];
         p.pick = null;
         p.draft = null;
       }
@@ -416,6 +423,7 @@ export class Room {
         p.totalTimeMs += fullRoundMs;
       }
       p.total += score;
+      p.rounds.push({ target, pick: pick?.hex ?? null, deltaE: dE, score });
       results.push({ id: p.id, name: p.name, pick: pick?.hex ?? null, deltaE: dE, score, timeMs });
       records.push({
         gameId: this.gameId as string,
@@ -467,7 +475,7 @@ export class Room {
     }
     this.lastFinal = { t: 'final', serverNow: Date.now(), standings: this.standings(), colors: this.colors };
     const final = this.lastFinal;
-    this.each(() => final);
+    this.each((p) => ({ ...final, yourRounds: p.rounds }));
   }
 
   // ---- views --------------------------------------------------------------
@@ -543,7 +551,7 @@ export class Room {
         if (this.lastReveal) this.sendTo(p, { ...this.lastReveal, serverNow: Date.now() });
         break;
       case 'final':
-        if (this.lastFinal) this.sendTo(p, { ...this.lastFinal, serverNow: Date.now() });
+        if (this.lastFinal) this.sendTo(p, { ...this.lastFinal, serverNow: Date.now(), yourRounds: p.rounds });
         break;
       default:
         break;

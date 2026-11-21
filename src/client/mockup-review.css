@@ -1,0 +1,39 @@
+/* Dev-only preview page chrome (mockup-review.html). The review styles live in styles.css. */
+
+/* ---- mockup chrome (not part of the feature) ---- */
+.mk-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 4px 2px 0;
+}
+.mk-sub {
+  font-size: 0.82rem;
+  margin: 0;
+}
+.mk-toggle {
+  display: flex;
+  gap: 6px;
+}
+.mk-toggle .btn[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.mk-image {
+  margin-top: 28px;
+}
+.mk-image h3 {
+  margin-top: 0;
+}
+.mk-preview {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin: 10px auto 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}

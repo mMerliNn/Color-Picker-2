@@ -43,6 +43,14 @@ export interface RoundResult {
   timeMs: number | null;
 }
 
+/** One round as one player played it: sent only to that player, for their review. */
+export interface RoundReview {
+  target: string;
+  pick: string | null; // null when the player missed the round
+  deltaE: number | null;
+  score: number;
+}
+
 // ---- client -> server ----------------------------------------------------
 
 export type ClientMessage =
@@ -103,7 +111,14 @@ export type ServerMessage =
       standings: Standing[];
       nextAt: number; // next round, or the final results after the last round
     }
-  | { t: 'final'; serverNow: number; standings: Standing[]; colors: string[] }
+  | {
+      t: 'final';
+      serverNow: number;
+      standings: Standing[];
+      colors: string[];
+      // This player's own rounds, in order (one per round). Never anyone else's.
+      yourRounds: RoundReview[];
+    }
   | { t: 'error'; code: ErrorCode; message: string };
 
 export type ErrorCode =

@@ -956,3 +956,269 @@ a.btn.link {
     grid-template-columns: 5.2rem 1fr 2.6rem;
   }
 }
+
+/* ---- round review (final results → "Review my rounds") ------------------- */
+
+.rv-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.rv-head h2 {
+  margin: 0;
+}
+.rv-close {
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px -10px 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 10px;
+}
+.rv-meta {
+  margin: 2px 0 6px;
+  font-size: 0.88rem;
+}
+/* The date wraps as a whole; once it sits on its own line its "·" is hidden. */
+.rv-date {
+  display: inline-block;
+  white-space: nowrap;
+}
+.rv-meta.wrapped .rv-sep {
+  display: none;
+}
+/* Keep it on its own line once wrapped: without the "·" it might just fit back. */
+.rv-meta.wrapped .rv-date {
+  display: block;
+}
+.rv-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+.rv-key {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.rv-key i {
+  position: relative;
+  flex: none;
+}
+.rv-key i + i {
+  margin-left: 6px;
+}
+/* Legend copy of the "⌶" mark (shares .rv-zone styles below). */
+.rv-key i.k-zone {
+  position: relative;
+  top: auto;
+  bottom: auto;
+  width: 10px;
+  height: 16px;
+  margin-left: 2px;
+}
+.k-zone::before {
+  content: '';
+  left: 50%;
+}
+.k-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #9a9aa3;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+/* Mini sliders: target zone + pick dot on a gradient of that one property. */
+.rv-bar {
+  position: relative;
+  height: 10px;
+  margin: 6px 0 4px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.rv-bar.faded {
+  opacity: 0.35;
+}
+/* "⌶" target mark: the stem is the exact target, the caps span the good range
+   (±5). White with one dark outline around the whole shape (drop-shadow on the
+   group), so it reads on any gradient. Taller than the dot, so the caps still
+   show when the dot lands right on the target. */
+.rv-zone,
+.k-zone {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  border-top: 1.5px solid #fff;
+  border-bottom: 1.5px solid #fff;
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 0.3px rgba(0, 0, 0, 0.8));
+}
+.rv-stem,
+.k-zone::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  margin-left: -0.75px;
+  background: #fff;
+}
+.rv-dot {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.rv-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.rv-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.rv-pair {
+  display: flex;
+  width: 64px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  /* outer ring, so it never changes the colours being compared */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.rv-pair span {
+  flex: 1;
+}
+.rv-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rv-hex {
+  font: 0.8rem/1.4 ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rv-score {
+  text-align: right;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.rv-score > div:first-child {
+  font-size: 0.95rem;
+}
+.rv-notes {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* room for a pick dot that sits at the very end of a bar */
+  gap: 16px;
+}
+.rv-note {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.rv-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.review .btn.big {
+  margin-top: 16px;
+}
+
+/* Summary tip for the whole game */
+.rv-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.rv-tip-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* The review opens as a modal dialog over the final results. */
+.review-dialog {
+  width: min(560px, calc(100% - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.review-dialog::backdrop {
+  background: rgba(10, 10, 14, 0.55);
+}
+.review-dialog .card {
+  margin: 0;
+}
+/* Long reviews scroll: keep the title and the × in view. */
+.review-dialog .rv-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -20px -20px 0;
+  padding: 14px 20px 4px;
+  background: var(--card);
+}
+/* Opening at a round scrolls it into view below the sticky header, not under it. */
+.review-dialog .rv-row {
+  scroll-margin-top: 64px;
+}
+body:has(.review-dialog[open]) {
+  overflow: hidden;
+}
+
+/* Final results: each color chip opens the review at that round. */
+.chip-btn {
+  font: inherit;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+.chip-btn:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}

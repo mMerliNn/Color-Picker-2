@@ -241,6 +241,13 @@ describe('a full game', () => {
     // Ann and Cat tie (same score, same time because the fake clock never moved).
     expect(final.standings.map((s) => s.rank)).toEqual([1, 1, 3]);
 
+    // Each player gets their own rounds for the review, and nobody else's.
+    expect(final.yourRounds).toEqual(targets.map((t) => ({ target: t, pick: t, deltaE: 0, score: 100 })));
+    const bobFinal = bob.conn.last('final')!;
+    expect(bobFinal.yourRounds.map((r) => r.pick)).toEqual(Array(5).fill('#808080'));
+    expect(bobFinal.yourRounds.map((r) => r.target)).toEqual(targets);
+    expect(bobFinal.yourRounds.map((r) => r.score)).toEqual(targets.map((t) => scoreFromDeltaE(deltaE(t, '#808080'))));
+
     // Raw data for the future analysis page: one row per player per round.
     expect(store.countPicks()).toBe(15);
     const [game] = store.listGames();
@@ -392,6 +399,8 @@ describe('a full game', () => {
     const b3 = { ...connect('Bob'), clientId: bob.clientId };
     join(b3, code);
     expect(b3.conn.last('final')?.standings).toHaveLength(2);
+    // The review survives reconnects: all five of Bob's rounds, including the one before the drop.
+    expect(b3.conn.last('final')?.yourRounds.map((r) => r.score)).toEqual([100, 100, 100, 100, 100]);
   });
 
   it('lets the host start a new game from the final screen', () => {
@@ -416,6 +425,16 @@ describe('a full game', () => {
     start(ann);
     expect(ann.conn.last('round')!.index).toBe(0);
     expect(store.listGames()).toHaveLength(2);
+
+    const secondTargets: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      secondTargets.push(target(ann));
+      send(ann, { t: 'pick', hex: target(ann) });
+      send(bob, { t: 'pick', hex: target(bob) });
+      vi.advanceTimersByTime(7000);
+    }
+    // The review covers only the new game, not the one before it.
+    expect(ann.conn.last('final')!.yourRounds.map((r) => r.target)).toEqual(secondTargets);
     void code;
   });
 });

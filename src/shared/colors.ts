@@ -99,8 +99,5 @@ export function toLch(hex: string): Lch {
   return { l: round2(l), c: round2(c), h: c < 1 || Number.isNaN(h) ? null : round2(h) };
 }
 
-/** Signed hue difference b - a wrapped to (-180, 180]. */
-export function hueDiff(a: number, b: number): number {
-  const d = (((b - a) % 360) + 540) % 360 - 180;
-  return d === -180 ? 180 : d;
-}
+/** Signed hue difference b - a wrapped to (-180, 180]. Lives in review.ts (no chroma-js) so the browser can use it too. */
+export { hueDiff } from './review.js';

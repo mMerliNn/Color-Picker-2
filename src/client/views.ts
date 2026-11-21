@@ -11,6 +11,7 @@ import {
 import type { Ctx, View } from './ctx.js';
 import { clear, h, setText, swatch } from './dom.js';
 import { profileQuery } from './identity.js';
+import { openReview } from './review.js';
 
 const NEUTRAL = '#808080';
 
@@ -513,8 +514,29 @@ export function finalView(ctx: Ctx): View {
     );
   }
 
+  // Your own rounds (pick, ΔE, score), for the "Review my rounds" sheet.
+  const me = fin.standings.find((s) => s.id === room.youId);
+  const rounds = fin.yourRounds ?? []; // missing from a server older than this client
+  const review =
+    me && rounds.length > 0
+      ? (startAt?: number) =>
+          openReview({ player: me.name, total: me.total, avgDeltaE: me.avgDeltaE, date: new Date(), rounds }, el, startAt)
+      : null;
+
   const strip = h('div', { class: 'strip' });
-  fin.colors.forEach((c, i) => strip.append(swatch(c, `Color ${i + 1}`, 'chip')));
+  fin.colors.forEach((c, i) => {
+    if (!review) {
+      strip.append(swatch(c, `Color ${i + 1}`, 'chip'));
+      return;
+    }
+    // Each chip opens the review at its own round.
+    const chip = h('button', { class: 'swatch chip chip-btn', type: 'button', 'aria-label': `Review round ${i + 1} (${c})` });
+    chip.style.backgroundColor = c;
+    chip.addEventListener('click', () => review(i));
+    strip.append(chip);
+  });
+  const reviewBtn = review && h('button', { class: 'btn big', type: 'button' }, 'Review my rounds');
+  reviewBtn?.addEventListener('click', () => review?.());
 
   const againBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Play again');
   againBtn.addEventListener('click', () => ctx.actions.again());
@@ -529,6 +551,7 @@ export function finalView(ctx: Ctx): View {
     standingsTable(fin.standings, room.youId, true),
     h('h3', null, 'The colors'),
     strip,
+    reviewBtn,
     isHost ? againBtn : h('p', { class: 'muted center' }, 'Waiting for the host to start another game…'),
     h('a', { class: 'btn link', href: `/stats${profileQuery()}` }, 'See my stats'),
     leaveBtn,
