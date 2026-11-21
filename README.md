@@ -85,11 +85,12 @@ npm run typecheck
    podium and full table. The host can start another game.
 5. **Review my rounds** (final screen, or tap a color chip to open it at that round): one row per
    round with the target beside your pick, points and ΔE, and three mini sliders for **hue,
-   saturation and brightness**. Each slider shows the target as a "⌶" (the stem is the exact
-   value, the caps span the ±5 "good" range) and your pick as a dot, so you can see which way you
-   were off and by how much. A tip at the top sums up the game ("You tend to pick colors too
-   muted."). **Save as image** draws the same review into a PNG (the share sheet on phones, a
-   download elsewhere). The bars use HSV, the same model as the picker; scoring still uses ΔE.
+   saturation and brightness**. Each slider shows the target as a tick and your pick as a dot on
+   top of it, so you can see which way you were off and by how much. All three bars use the same
+   100-unit scale (hue shows the target ±50°). A tip at the top sums up the game ("You tend to
+   pick colors too muted."), counting a miss under 5 units as good. **Save as image** draws the
+   same review into a PNG (the share sheet on phones, a download elsewhere). The bars use HSV, the
+   same model as the picker; scoring still uses ΔE.
    The server sends each player only their own rounds (`yourRounds` in the `final` message).
 
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time.

@@ -1,6 +1,6 @@
 // "Review my rounds": a sheet over the final results showing, for every round,
 // the target next to the player's pick and three mini sliders (hue, saturation,
-// brightness) with the target's "⌶" mark and the pick's dot, plus a summary tip
+// brightness) with a target tick and the pick's dot on top of it, plus a summary tip
 // for the whole game. "Save as image" draws the same content on a canvas.
 //
 // The numbers come from src/shared/review.ts; this file only draws them.
@@ -19,7 +19,6 @@ export interface ReviewData {
 }
 
 const LEGEND = 'Swatch: left = target, right = your pick';
-const ZONE_LABEL = 'target & good range';
 const dateText = (d: Date) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 const statsText = (d: ReviewData) =>
   `${d.player} · ${d.total} pts · avg ΔE ${d.avgDeltaE === null ? '–' : d.avgDeltaE.toFixed(1)}`;
@@ -61,7 +60,7 @@ function legendEl(): HTMLElement {
     'div',
     { class: 'rv-legend muted' },
     h('span', null, LEGEND),
-    h('span', { class: 'rv-key' }, 'Bars:', h('i', { class: 'k-zone' }), ZONE_LABEL, h('i', { class: 'k-dot' }), 'your pick'),
+    h('span', { class: 'rv-key' }, 'Bars:', h('i', { class: 'k-tick' }), 'target', h('i', { class: 'k-dot' }), 'your pick'),
   );
 }
 
@@ -83,17 +82,13 @@ function barEl(n: ReviewNote, pick: string): HTMLElement {
   });
   el.style.background = `linear-gradient(to right, ${b.stops.join(', ')})`;
   if (!b.faded) {
-    // "⌶": the stem marks the exact target, the caps span the good range.
-    const width = b.band[1] - b.band[0];
-    const stem = h('span', { class: 'rv-stem' });
-    stem.style.left = pct((b.target - b.band[0]) / width); // off-centre when the range is cut at a bar end
-    const zone = h('span', { class: 'rv-zone' }, stem);
-    zone.style.left = pct(b.band[0]);
-    zone.style.width = pct(width);
+    // The target tick first, so the pick dot sits on top of it.
+    const tick = h('span', { class: 'rv-tick' });
+    tick.style.left = pct(b.target);
     const dot = h('span', { class: 'rv-dot' });
     dot.style.left = pct(b.pick);
     dot.style.backgroundColor = pick;
-    el.append(zone, dot);
+    el.append(tick, dot);
   }
   return el;
 }
@@ -237,28 +232,15 @@ function drawDot(ctx: CanvasRenderingContext2D, x: number, cy: number, color: st
 }
 
 /**
- * The "⌶" target mark: a stem at the exact target (x) and caps spanning the good
- * range (x0..x1), from `top` to `bottom`. Drawn dark-then-white so the outline
- * wraps the whole shape and it reads on any gradient. Taller than the pick dot,
- * so the caps still show when the dot lands right on the target.
+ * Target tick: a white bar at x with a solid dark outline, from `top` to
+ * `bottom`, matching .rv-tick in the sheet. Drawn before the pick dot, so the
+ * dot sits on top of it.
  */
-function drawZone(ctx: CanvasRenderingContext2D, x0: number, x1: number, x: number, top: number, bottom: number): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(x0, top);
-  ctx.lineTo(x1, top);
-  ctx.moveTo(x0, bottom);
-  ctx.lineTo(x1, bottom);
-  ctx.moveTo(x, top);
-  ctx.lineTo(x, bottom);
-  ctx.lineCap = 'square';
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.restore();
+function drawTick(ctx: CanvasRenderingContext2D, x: number, top: number, bottom: number): void {
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(x - 2, top - 1, 4, bottom - top + 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x - 1, top, 2, bottom - top);
 }
 
 function drawBar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, hgt: number, b: ReviewBar, pick: string): void {
@@ -275,7 +257,7 @@ function drawBar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number,
   ctx.stroke();
   ctx.restore();
   if (b.faded) return;
-  drawZone(ctx, x + w * b.band[0], x + w * b.band[1], x + w * b.target, y - 4, y + hgt + 4);
+  drawTick(ctx, x + w * b.target, y - 4, y + hgt + 4);
   drawDot(ctx, x + w * b.pick, y + hgt / 2, pick);
 }
 
@@ -340,10 +322,10 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
   let lx = PAD;
   text('Bars:', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
   lx += ctx.measureText('Bars:').width + 7;
-  if (draw) drawZone(ctx, lx + 1, lx + 9, lx + 5, y + 2, y + 15);
-  lx += 15;
-  text(ZONE_LABEL, lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
-  lx += ctx.measureText(ZONE_LABEL).width + 14;
+  if (draw) drawTick(ctx, lx + 3, y + 1, y + 16);
+  lx += 10;
+  text('target', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
+  lx += ctx.measureText('target').width + 14;
   if (draw) drawDot(ctx, lx, y + 8.5, '#9a9aa3');
   lx += 10;
   text('your pick', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);

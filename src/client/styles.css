@@ -1016,18 +1016,14 @@ a.btn.link {
 .rv-key i + i {
   margin-left: 6px;
 }
-/* Legend copy of the "⌶" mark (shares .rv-zone styles below). */
-.rv-key i.k-zone {
-  position: relative;
-  top: auto;
-  bottom: auto;
-  width: 10px;
+/* Legend copies of the target tick and the pick dot. */
+.k-tick {
+  width: 2px;
   height: 16px;
-  margin-left: 2px;
-}
-.k-zone::before {
-  content: '';
-  left: 50%;
+  margin: 0 2px 0 4px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
 }
 .k-dot {
   width: 12px;
@@ -1038,7 +1034,7 @@ a.btn.link {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 
-/* Mini sliders: target zone + pick dot on a gradient of that one property. */
+/* Mini sliders: target tick + pick dot on a gradient of that one property. */
 .rv-bar {
   position: relative;
   height: 10px;
@@ -1049,27 +1045,19 @@ a.btn.link {
 .rv-bar.faded {
   opacity: 0.35;
 }
-/* "⌶" target mark: the stem is the exact target, the caps span the good range
-   (±5). White with one dark outline around the whole shape (drop-shadow on the
-   group), so it reads on any gradient. Taller than the dot, so the caps still
-   show when the dot lands right on the target. */
-.rv-zone,
-.k-zone {
+/* Target tick: a white bar with a solid dark outline (a box-shadow ring, which
+   stays crisp on 1x screens where a sub-pixel drop-shadow fades to nothing), so
+   it reads on any gradient. It stands out above and below the bar, and the pick
+   dot is drawn over it, so a pick right on target still shows the tick's ends. */
+.rv-tick {
   position: absolute;
-  top: -5px;
-  bottom: -5px;
-  border-top: 1.5px solid #fff;
-  border-bottom: 1.5px solid #fff;
-  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 0.3px rgba(0, 0, 0, 0.8));
-}
-.rv-stem,
-.k-zone::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1.5px;
-  margin-left: -0.75px;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
   background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
 }
 .rv-dot {
   position: absolute;

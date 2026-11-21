@@ -60,15 +60,15 @@ describe('reviewNotes', () => {
     expect(notes.Hue!.good && notes.Saturation!.good && notes.Brightness!.good).toBe(true);
   });
 
-  it('draws the good range the same width on all three bars', () => {
-    const widths = reviewNotes(target, target).map((n) => n.bar.band[1] - n.bar.band[0]);
-    for (const w of widths) expect(w).toBeCloseTo(0.1, 5);
+  it('uses the same scale on all three bars: a 10-unit miss moves the dot a tenth of the bar', () => {
+    const notes = byLabel(target, miss(target, 10, 0.1, 0.1));
+    for (const n of Object.values(notes)) expect(n.bar.pick - n.bar.target).toBeCloseTo(0.1, 2);
   });
 
-  it('cuts the good range off at a bar end and keeps the target on it', () => {
+  it('puts the target tick at the end of the bar for a fully bright target', () => {
     const white = byLabel('#ffffff', '#f0f0f0');
     expect(white.Brightness!.bar.target).toBe(1);
-    expect(white.Brightness!.bar.band).toEqual([0.95, 1]);
+    expect(white.Brightness!.bar.pick).toBeCloseTo(0xf0 / 255, 5);
   });
 
   it('does not judge hue for near-gray targets', () => {

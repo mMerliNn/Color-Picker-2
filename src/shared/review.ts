@@ -83,15 +83,15 @@ export function hueName(deg: number): string {
 
 /**
  * Below this a difference counts as "good": degrees for hue, points out of 100
- * for saturation and brightness. The bars draw it as the caps of the "⌶" mark,
- * and the summary tip uses the same limit, so the two always agree.
+ * for saturation and brightness. Used for the per-round verdicts (read out by
+ * screen readers) and the summary tip.
  */
 export const GOOD = 5;
 
 /**
  * The hue bar shows the target's hue ± this many degrees. 50 makes it span 100°,
  * the same 100-unit scale as the saturation and brightness bars (0..100), so the
- * ±GOOD "⌶" mark is the same width on all three.
+ * same gap between tick and dot means the same size of miss on all three.
  */
 export const HUE_SPAN = 50;
 
@@ -108,8 +108,6 @@ export interface ReviewBar {
   out: -1 | 0 | 1;
   /** No marks: the hue of a near-gray target, where hue does not matter. */
   faded: boolean;
-  /** The good range around the target (start, end), cut off at the bar's ends. */
-  band: [number, number];
 }
 
 export interface ReviewNote {
@@ -124,10 +122,6 @@ function sample(n: number, f: (x: number) => string): string[] {
   return Array.from({ length: n }, (_, i) => f(i / (n - 1)));
 }
 
-function svBand(target: number): [number, number] {
-  return [clamp01(target - GOOD / 100), clamp01(target + GOOD / 100)];
-}
-
 function hueBar(t: Hsv, dh: number, faded: boolean): ReviewBar {
   // Keep the strip readable for dark or muted targets.
   const s = Math.max(t.s, 0.5);
@@ -139,7 +133,6 @@ function hueBar(t: Hsv, dh: number, faded: boolean): ReviewBar {
     pick: clamp01(pos),
     out: pos < 0 ? -1 : pos > 1 ? 1 : 0,
     faded,
-    band: [0.5 - GOOD / (2 * HUE_SPAN), 0.5 + GOOD / (2 * HUE_SPAN)],
   };
 }
 
@@ -180,7 +173,6 @@ export function reviewNotes(target: string, pick: string): ReviewNote[] {
       pick: p.s,
       out: 0,
       faded: false,
-      band: svBand(t.s),
     },
   });
 
@@ -196,7 +188,6 @@ export function reviewNotes(target: string, pick: string): ReviewNote[] {
       pick: p.v,
       out: 0,
       faded: false,
-      band: svBand(t.v),
     },
   });
 
