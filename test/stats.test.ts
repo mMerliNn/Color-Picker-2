@@ -243,3 +243,42 @@ describe('computeStats: insights', () => {
     expect(computeStats(many(25, { delta_e: 14 }), global).insights[0]).toMatch(/average of all players is 9\.0/);
   });
 });
+
+describe('database upgrade', () => {
+  it('marks games logged before game modes existed as classic', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { GameStore } = await import('../src/server/db.js');
+    const dir = mkdtempSync(join(tmpdir(), 'colormatch-db-'));
+    const file = join(dir, 'old.db');
+    try {
+      const old = new DatabaseSync(file);
+      old.exec(`
+        CREATE TABLE games (id TEXT PRIMARY KEY, room_code TEXT NOT NULL, seed INTEGER NOT NULL,
+          rounds INTEGER NOT NULL, round_seconds INTEGER NOT NULL, player_count INTEGER NOT NULL,
+          started_at INTEGER NOT NULL, ended_at INTEGER);
+        CREATE TABLE picks (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL, round INTEGER NOT NULL,
+          client_id TEXT NOT NULL, player_name TEXT NOT NULL, target_hex TEXT NOT NULL, pick_hex TEXT,
+          delta_e REAL, score INTEGER NOT NULL, time_ms INTEGER, target_l REAL NOT NULL, target_c REAL NOT NULL,
+          target_h REAL, pick_l REAL, pick_c REAL, pick_h REAL, created_at INTEGER NOT NULL);
+        INSERT INTO games VALUES ('g1', 'ABCDE', 1, 5, 20, 1, 1000, 2000);
+        INSERT INTO picks (game_id, round, client_id, player_name, target_hex, pick_hex, delta_e, score, time_ms,
+          target_l, target_c, target_h, pick_l, pick_c, pick_h, created_at)
+          VALUES ('g1', 0, 'cid-old-00000', 'Old', '#3e63dd', '#3e63dd', 0, 100, 1000, 50, 60, 280, 50, 60, 280, 1500);
+        PRAGMA user_version = 1;
+      `);
+      old.close();
+      const store = new GameStore(file);
+      expect(store.listGames()[0]).toMatchObject({ id: 'g1', mode: 'classic', memorize_seconds: null });
+      expect(store.picksForClient('cid-old-00000')).toHaveLength(1); // still in the stats
+      store.close();
+      const again = new GameStore(file); // opening an upgraded file again changes nothing
+      expect(again.listGames()).toHaveLength(1);
+      again.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

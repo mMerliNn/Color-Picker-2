@@ -18,6 +18,9 @@ export interface GameRecord {
   seed: number;
   rounds: number;
   roundSeconds: number;
+  /** Classic or memory. Optional for callers (scripts, tests) that only play classic. */
+  mode?: 'classic' | 'memory';
+  memorizeSeconds?: number | null;
   playerCount: number;
   startedAt: number;
 }
@@ -57,7 +60,8 @@ export interface GlobalBin {
   avg: number;
 }
 
-const SCHEMA_VERSION = 1;
+// 1: games and picks. 2: games.mode and games.memorize_seconds (memory mode).
+const SCHEMA_VERSION = 2;
 
 export class GameStore {
   private readonly db: DatabaseSync;
@@ -73,6 +77,18 @@ export class GameStore {
   private migrate(): void {
     const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     if (row.user_version >= SCHEMA_VERSION) return;
+    if (row.user_version < 1) this.createV1();
+    // v2: the game mode. Every game logged before it was classic.
+    this.db.exec(`
+      BEGIN;
+      ALTER TABLE games ADD COLUMN mode TEXT NOT NULL DEFAULT 'classic';
+      ALTER TABLE games ADD COLUMN memorize_seconds INTEGER;
+      PRAGMA user_version = 2;
+      COMMIT;
+    `);
+  }
+
+  private createV1(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS games (
         id            TEXT PRIMARY KEY,
@@ -105,15 +121,16 @@ export class GameStore {
       );
       CREATE INDEX IF NOT EXISTS picks_by_client ON picks (client_id, created_at);
       CREATE INDEX IF NOT EXISTS picks_by_game ON picks (game_id, round);
-      PRAGMA user_version = ${SCHEMA_VERSION};
+      PRAGMA user_version = 1;
     `);
   }
 
   startGame(game: GameRecord): void {
     this.db
       .prepare(
-        `INSERT INTO games (id, room_code, seed, rounds, round_seconds, player_count, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO games (id, room_code, seed, rounds, round_seconds, mode, memorize_seconds,
+                            player_count, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         game.id,
@@ -121,6 +138,8 @@ export class GameStore {
         game.seed,
         game.rounds,
         game.roundSeconds,
+        game.mode ?? 'classic',
+        game.memorizeSeconds ?? null,
         game.playerCount,
         game.startedAt,
       );
@@ -177,34 +196,41 @@ export class GameStore {
       .all(gameId) as Record<string, unknown>[];
   }
 
-  /** A player's most recent picks (misses included), newest first. */
+  /**
+   * A player's most recent classic picks (misses included), newest first.
+   * Memory-mode picks are left out: matching from memory is a different skill
+   * with much bigger errors, and mixing the two would blur every chart.
+   */
   picksForClient(clientId: string, limit = 3000): PickRow[] {
     return this.db
       .prepare(
-        `SELECT game_id, round, pick_hex, delta_e, score, time_ms,
-                target_l, target_c, target_h, pick_l, pick_c, pick_h, created_at
-         FROM picks WHERE client_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+        `SELECT p.game_id, p.round, p.pick_hex, p.delta_e, p.score, p.time_ms,
+                p.target_l, p.target_c, p.target_h, p.pick_l, p.pick_c, p.pick_h, p.created_at
+         FROM picks p JOIN games g ON g.id = p.game_id
+         WHERE p.client_id = ? AND g.mode = 'classic'
+         ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
       )
       .all(clientId, limit) as unknown as PickRow[];
   }
 
   /**
-   * Average error of everyone, per 30-degree hue sector of the target. Simulated
-   * players (client ids starting with "bot-") are left out.
+   * Average error of everyone in classic games, per 30-degree hue sector of the
+   * target. Simulated players (client ids starting with "bot-") are left out.
    */
   globalHueBins(): { bins: GlobalBin[]; overall: { n: number; avg: number | null } } {
     const bins = this.db
       .prepare(
-        `SELECT MIN(11, CAST(target_h / 30 AS INTEGER)) AS bin, COUNT(*) AS n, AVG(delta_e) AS avg
-         FROM picks
-         WHERE pick_hex IS NOT NULL AND target_h IS NOT NULL AND client_id NOT LIKE 'bot-%'
+        `SELECT MIN(11, CAST(p.target_h / 30 AS INTEGER)) AS bin, COUNT(*) AS n, AVG(p.delta_e) AS avg
+         FROM picks p JOIN games g ON g.id = p.game_id
+         WHERE p.pick_hex IS NOT NULL AND p.target_h IS NOT NULL AND p.client_id NOT LIKE 'bot-%'
+           AND g.mode = 'classic'
          GROUP BY bin`,
       )
       .all() as unknown as GlobalBin[];
     const overall = this.db
       .prepare(
-        `SELECT COUNT(*) AS n, AVG(delta_e) AS avg FROM picks
-         WHERE pick_hex IS NOT NULL AND client_id NOT LIKE 'bot-%'`,
+        `SELECT COUNT(*) AS n, AVG(p.delta_e) AS avg FROM picks p JOIN games g ON g.id = p.game_id
+         WHERE p.pick_hex IS NOT NULL AND p.client_id NOT LIKE 'bot-%' AND g.mode = 'classic'`,
       )
       .get() as unknown as { n: number; avg: number | null };
     return { bins, overall };

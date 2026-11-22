@@ -149,6 +149,8 @@ function handleMessage(msg: ServerMessage): void {
         index: msg.index,
         total: msg.total,
         color: msg.color,
+        hideAt: msg.hideAt,
+        unlockAt: msg.unlockAt,
         endsAt: msg.endsAt,
         submitted: msg.submitted,
         expected: msg.expected,
@@ -207,6 +209,7 @@ const actions: Actions = {
   setSettings: (settings) => void send({ t: 'settings', settings }),
   pick: (hex) => send({ t: 'pick', hex }),
   draft: (hex) => conn.send({ t: 'draft', hex }),
+  next: () => void send({ t: 'next' }),
   again: () => void send({ t: 'again' }),
   leave() {
     send({ t: 'leave' });

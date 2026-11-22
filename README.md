@@ -1,7 +1,8 @@
 # Color Match (multiplayer)
 
 Up to 30 players join a room with a 5-letter code and match the **same set of colors**
-(5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**). Scores are computed on the server from the CIEDE2000
+(5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**), either with the color
+on screen (**Classic**) or from memory (**Memory**). Scores are computed on the server from the CIEDE2000
 color difference, and every pick is stored in SQLite. Each player has a personal
 **history analysis page** (`/stats`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
@@ -81,8 +82,18 @@ npm run typecheck
    component; if touch problems persist, the next step is replacing it with a pointer-events
    picker (multi-touch safe), because the library follows `touches[0]`, the first finger on the
    whole screen.
-4. After each round everyone sees all picks, ΔE, points and the standings. After the last round:
-   podium and full table. The host can start another game.
+4. After each round everyone sees all picks, ΔE, points and the standings. The result keeps the
+   round's header, timer bar and color squares in the same place, so the target simply turns into
+   the real color next to your pick. Everyone moves on together when the pause ends; a **solo**
+   player also gets a **Next round** button to skip the wait (`next` message; the server refuses it,
+   `solo_only`, while anyone else is connected). After the last round: podium and full table. The
+   host can start another game.
+
+   **Quit game:** a quiet link under the countdown, every round and every result, confirmed in a
+   dialog ("Keep playing" has focus, so Enter never quits by accident). It sends the existing
+   `leave`. The others play on without you; if nobody is left, the server stops the game there
+   instead of playing the remaining rounds to an empty room (so they are not logged as misses), and
+   the game stays in the log as unfinished.
 5. **Review my rounds** (final screen, or tap a color chip to open it at that round): one row per
    round with the target beside your pick, points and ΔE, and three mini sliders for **hue,
    saturation and brightness**. Each slider shows the target as a tick and your pick as a dot on
@@ -94,6 +105,18 @@ npm run typecheck
    The server sends each player only their own rounds (`yourRounds` in the `final` message).
 
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time.
+
+**Memory mode** (lobby: *Mode*, then *Show color for* 2, 3 or 5 seconds): each color shows for
+that long ("Watch carefully"), then disappears behind 1 second of gray static, and the picker
+unlocks. The time per round, the 1.5 s grace and a pick's recorded time all count from the unlock,
+so watching never uses up picking time. Drafts, the auto lock-in and "an untouched picker scores
+0" work exactly as in Classic. The `round` message carries `hideAt` and `unlockAt` (both null in
+Classic); the server refuses a pick (and ignores a draft) sent while the color is still on screen,
+and accepts one from the moment it hides, so a slightly fast client clock never loses a fair pick.
+Once the color has hidden, the server never sends it again: someone who reconnects mid-round gets
+`color: null` and picks from memory like everyone else. While watching, one wide color is laid over
+the two squares, which stay in place invisibly, so nothing on the screen moves between watching,
+the static, picking and the result.
 
 **Time per round:** 15, 20, 30 or 60 seconds, or **Unlimited (solo only)**. An unlimited round has no
 timer and ends when the player locks in. It exists only for single-player games: with two or more
@@ -111,7 +134,8 @@ mid-round. Opening the game in a second tab takes over the seat.
 **Honest limitation:** the target color has to reach the browser to be displayed, so a determined
 player can read it from dev tools and type the exact hex. The server fixes what it can (it scores,
 it never sends future colors, picks are hidden until the reveal) but this is a game for friends
-and classrooms, not a tournament. A "memory mode" would not change that.
+and classrooms, not a tournament. Memory mode keeps the color out of the page once it hides and
+never resends it, but it was in the browser while it was shown, so the same applies.
 
 ## Stored data
 
@@ -119,12 +143,18 @@ and classrooms, not a tournament. A "memory mode" would not change that.
 it is never sent to other players.
 
 ```
-games(id, room_code, seed, rounds, round_seconds, player_count, started_at, ended_at)
+games(id, room_code, seed, rounds, round_seconds, mode, memorize_seconds, player_count,
+      started_at, ended_at)
 picks(id, game_id, round, client_id, player_name, target_hex, pick_hex, delta_e, score, time_ms,
       target_l, target_c, target_h, pick_l, pick_c, pick_h, created_at)
 ```
 
 `*_l/c/h` are CIE LCH values (hue is NULL for near-grays). Missed rounds have `pick_hex = NULL`.
+`mode` is `classic` or `memory` (`memorize_seconds` is set for memory games only). The columns were
+added in schema version 2; an older database is upgraded on start and its games are marked
+`classic`. The stats page uses **classic games only**: matching from memory is a different skill
+with much bigger errors, and mixing the two would blur every chart. Memory picks are stored with
+everything else, ready for a memory section later.
 Examples for the future analysis page:
 
 ```sql
@@ -174,7 +204,7 @@ colormatch-report        # last 7 days
 colormatch-report 30     # last 30 days
 ```
 
-It shows an overview (players, new and active players, games, unlimited-time games), new players
+It shows an overview (players, new and active players, games, unlimited-time and memory games), new players
 in the period, all players (names, games, finished games, rounds, missed rounds, average ΔE,
 points, first/last seen), recent games and activity per day. Times are UTC. A "player" is one
 browser, not a person, and names are whatever people typed. Only the first 6 characters of each

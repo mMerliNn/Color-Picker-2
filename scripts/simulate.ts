@@ -52,8 +52,12 @@ function startBot(index: number): void {
   ws.on('message', (data) => {
     const m = JSON.parse(String(data)) as ServerMessage;
     if (m.t === 'round') {
-      const delay = 1000 + Math.random() * 5000;
-      setTimeout(() => ws.readyState === WebSocket.OPEN && send({ t: 'pick', hex: noisy(m.color, skill) }), delay);
+      const color = m.color;
+      if (!color) return; // memory mode, joined after the color was hidden: sit this round out
+      // Memory mode: wait for the picker to unlock, like a person would.
+      const wait = m.unlockAt === null ? 0 : Math.max(0, m.unlockAt - m.serverNow);
+      const delay = wait + 1000 + Math.random() * 5000;
+      setTimeout(() => ws.readyState === WebSocket.OPEN && send({ t: 'pick', hex: noisy(color, skill) }), delay);
     } else if (m.t === 'error') {
       console.error(`${name}: ${m.code} - ${m.message}`);
       ws.close();

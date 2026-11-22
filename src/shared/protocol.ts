@@ -12,12 +12,26 @@ export const ROUND_OPTIONS = [5, 10] as const;
 export const UNLIMITED_SECONDS = 0;
 export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
 
+/**
+ * Classic: the target stays on screen while you match it.
+ * Memory: the target shows for `memorizeSeconds`, then hides behind a moment of
+ * static, and the player matches it from memory.
+ */
+export const MODE_OPTIONS = ['classic', 'memory'] as const;
+export type GameMode = (typeof MODE_OPTIONS)[number];
+/** Memory mode: how long the color is shown, in seconds. */
+export const MEMORIZE_OPTIONS = [2, 3, 5] as const;
+/** Memory mode: static between hiding the color and unlocking the picker. */
+export const MEMORY_STATIC_MS = 1000;
+
 export interface GameSettings {
   rounds: number;
   roundSeconds: number;
+  mode: GameMode;
+  memorizeSeconds: number; // memory mode only
 }
 
-export const DEFAULT_SETTINGS: GameSettings = { rounds: 10, roundSeconds: 20 };
+export const DEFAULT_SETTINGS: GameSettings = { rounds: 10, roundSeconds: 20, mode: 'classic', memorizeSeconds: 3 };
 
 export interface PlayerInfo {
   id: string; // public, per-room id (never the private clientId)
@@ -65,6 +79,8 @@ export type ClientMessage =
   | { t: 'draft'; hex: string }
   // Clock sync: the server echoes `c` back with its own time (see 'pong').
   | { t: 'ping'; c: number }
+  // Solo only: skip the wait after a round result and go straight on.
+  | { t: 'next' }
   | { t: 'again' }
   | { t: 'leave' };
 
@@ -93,7 +109,13 @@ export type ServerMessage =
       serverNow: number;
       index: number; // 0-based
       total: number;
-      color: string;
+      // The target. Null once it has been hidden in memory mode (for example
+      // when someone reconnects mid-round), so it never reaches the page again.
+      color: string | null;
+      // Memory mode only (null in classic): when the color hides, and when the
+      // static ends and the picker unlocks. The round time counts from unlockAt.
+      hideAt: number | null;
+      unlockAt: number | null;
       endsAt: number | null; // null = no time limit (solo "unlimited" mode)
       submitted: number;
       expected: number;
@@ -175,6 +197,14 @@ export function cleanSettings(raw: unknown): Partial<GameSettings> | null {
     if (!SECONDS_OPTIONS.includes(r.roundSeconds as (typeof SECONDS_OPTIONS)[number])) return null;
     out.roundSeconds = r.roundSeconds as number;
   }
+  if (r.mode !== undefined) {
+    if (!MODE_OPTIONS.includes(r.mode as GameMode)) return null;
+    out.mode = r.mode as GameMode;
+  }
+  if (r.memorizeSeconds !== undefined) {
+    if (!MEMORIZE_OPTIONS.includes(r.memorizeSeconds as (typeof MEMORIZE_OPTIONS)[number])) return null;
+    out.memorizeSeconds = r.memorizeSeconds as number;
+  }
   return out;
 }
 
@@ -206,6 +236,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case 'ping':
       return typeof m.c === 'number' && Number.isFinite(m.c) ? { t: 'ping', c: m.c } : null;
     case 'start':
+    case 'next':
     case 'again':
     case 'leave':
       return { t: m.t };

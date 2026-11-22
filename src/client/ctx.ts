@@ -21,7 +21,9 @@ export interface RoomModel {
 export interface RoundModel {
   index: number;
   total: number;
-  color: string;
+  color: string | null; // null once hidden (memory mode, after a reconnect)
+  hideAt: number | null; // memory mode: when the color hides
+  unlockAt: number | null; // memory mode: when the picker unlocks
   endsAt: number | null; // null = no time limit (solo "unlimited" mode)
   submitted: number;
   expected: number;
@@ -50,6 +52,8 @@ export interface Actions {
   pick(hex: string): boolean;
   /** Tell the server the color on screen (used if time runs out first). Silent: no error toast. */
   draft(hex: string): boolean;
+  /** Solo only: skip the pause after a round result. */
+  next(): void;
   again(): void;
   leave(): void;
   notify(message: string): void;

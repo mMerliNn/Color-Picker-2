@@ -1210,3 +1210,169 @@ body:has(.review-dialog[open]) {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ---- game mode (lobby) ---------------------------------------------------- */
+
+/* One-choice button row (Mode, Show color for). */
+.seg {
+  display: inline-flex;
+  justify-self: start;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg[hidden] {
+  display: none;
+}
+.seg button {
+  font: inherit;
+  font-size: 0.92rem;
+  border: 0;
+  background: none;
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.seg button[aria-checked='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.seg button:disabled {
+  cursor: default;
+}
+.seg button:disabled:not([aria-checked='true']) {
+  color: var(--muted);
+}
+.seg button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.mode-hint {
+  margin: 0 0 12px;
+}
+
+/* ---- memory mode round ---------------------------------------------------- */
+
+/* While watching (and during the static after it) one wide color is laid over
+   the two squares. The squares keep their place, invisible, so the stage is
+   exactly as tall in every phase and nothing below it moves. The overlay spans
+   from the left square's left edge to the right square's right edge (squares
+   are at most 150px wide, centred in their columns). */
+.play.memory .stage {
+  position: relative;
+}
+.play.memory[data-phase='watch'] .stage > figure:not(.memory-wide),
+.play.memory[data-phase='static'] .stage > figure:not(.memory-wide) {
+  visibility: hidden;
+}
+.memory-wide {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: calc(10px + max(0px, ((100% - 30px) / 2 - 150px) / 2));
+  right: calc(10px + max(0px, ((100% - 30px) / 2 - 150px) / 2));
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  text-align: center;
+}
+.memory-wide .swatch {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+}
+/* The watch countdown and the pause after a result use a quieter bar than the
+   round timer, so the two read differently. */
+.play.memory[data-phase='watch'] .timer-fill,
+.timer.quiet .timer-fill {
+  background: var(--muted);
+}
+
+.memory-hidden {
+  display: grid;
+  place-items: center;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 8px, rgba(255, 255, 255, 0.12) 8px 16px),
+    #707070;
+}
+.play.memory[data-phase='pick'] .memory-hidden {
+  animation: memory-in 0.35s ease-out;
+}
+.memory-hidden span {
+  font-size: 3rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.85);
+}
+/* The real color fading in on the round result. */
+.reveal-in {
+  animation: memory-in 0.35s ease-out;
+}
+@keyframes memory-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* A moment of gray static between hiding the color and picking. */
+.memory-noise {
+  background-color: #808080;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 120px 120px;
+  animation: memory-static 0.12s steps(2) infinite;
+}
+@keyframes memory-static {
+  to {
+    background-position: 37px 53px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play.memory[data-phase='pick'] .memory-hidden,
+  .memory-noise,
+  .reveal-in {
+    animation: none;
+  }
+}
+
+/* ---- quit ----------------------------------------------------------------- */
+
+.quit-link {
+  display: block;
+  margin: 10px auto 0;
+  font-size: 0.9rem;
+}
+.quit-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  padding: 20px;
+  width: min(360px, calc(100vw - 32px));
+}
+.quit-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+.quit-dialog h3 {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+}
+.quit-dialog p {
+  margin: 0;
+}
+.quit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

@@ -148,6 +148,7 @@ export class GameServer {
         else if (msg.t === 'start') failure = room.start(player);
         else if (msg.t === 'pick') failure = room.pick(player, msg.hex);
         else if (msg.t === 'draft') failure = room.draft(player, msg.hex);
+        else if (msg.t === 'next') failure = room.next(player);
         else if (msg.t === 'again') failure = room.again(player);
         if (failure) this.error(session, failure.code, failure.message);
       }

@@ -3,6 +3,7 @@ import { deltaE, generateColors, round2, scoreFromDeltaE } from '../shared/color
 import {
   DEFAULT_SETTINGS,
   MAX_PLAYERS,
+  MEMORY_STATIC_MS,
   UNLIMITED_SECONDS,
   type ErrorCode,
   type GameSettings,
@@ -85,11 +86,16 @@ export class Room {
   private gameId: string | null = null;
   private colors: string[] = [];
   private roundIndex = -1;
+  /** When the picker unlocks: the round start in classic, after the color and static in memory mode. */
   private roundStartedAt = 0;
+  /** Memory mode: when the color hides (null in classic). */
+  private roundHideAt: number | null = null;
   private roundEndsAt: number | null = null; // null = no time limit
   private startsAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastReveal: RevealMessage | null = null;
+  /** What follows the round result now on screen (next round or final results). */
+  private afterReveal: (() => void) | null = null;
   private lastFinal: FinalMessage | null = null;
 
   constructor(
@@ -189,7 +195,30 @@ export class Room {
   leave(player: Player): void {
     player.conn = null;
     if (this.phase === 'lobby') this.removePlayer(player);
+    else if (this.inGame() && this.connectedCount() === 0) this.abandon();
     else this.afterDeparture(player);
+  }
+
+  private inGame(): boolean {
+    return this.phase === 'starting' || this.phase === 'picking' || this.phase === 'reveal';
+  }
+
+  /**
+   * Everyone chose to quit mid-game: stop here instead of playing the remaining
+   * rounds to an empty room (which would log them all as misses). The game stays
+   * in the log as unfinished; the room is cleaned up like any empty room.
+   */
+  private abandon(): void {
+    this.clearTimer();
+    this.afterReveal = null;
+    this.phase = 'lobby';
+    this.colors = [];
+    this.gameId = null;
+    this.roundIndex = -1;
+    this.roundHideAt = null;
+    this.lastReveal = null;
+    this.lastFinal = null;
+    this.touch();
   }
 
   private afterDeparture(player: Player): void {
@@ -281,6 +310,8 @@ export class Room {
         seed,
         rounds: this.settings.rounds,
         roundSeconds: this.settings.roundSeconds,
+        mode: this.settings.mode,
+        memorizeSeconds: this.settings.mode === 'memory' ? this.settings.memorizeSeconds : null,
         playerCount: this.players.size,
         startedAt: Date.now(),
       });
@@ -336,13 +367,14 @@ export class Room {
   pick(player: Player, hex: string): ErrorResult | null {
     if (this.phase !== 'picking') return err('wrong_phase', 'No round is in progress.');
     const now = Date.now();
+    if (this.tooEarly(now)) return err('wrong_phase', 'Wait for the picker to unlock.');
     if (this.roundEndsAt !== null && now > this.roundEndsAt + this.timing.graceMs) {
       return err('wrong_phase', 'Too late.');
     }
     if (player.pick) return null; // first pick wins; duplicates are ignored
     this.touch();
     const limitMs = this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
-    const timeMs = Math.min(now - this.roundStartedAt, limitMs);
+    const timeMs = Math.min(Math.max(0, now - this.roundStartedAt), limitMs);
     player.pick = { hex, timeMs };
     this.sendTo(player, { t: 'picked', hex });
     this.progress();
@@ -357,27 +389,63 @@ export class Room {
    */
   draft(player: Player, hex: string): ErrorResult | null {
     if (this.phase !== 'picking' || player.pick) return null;
+    if (this.tooEarly(Date.now())) return null;
     if (this.roundEndsAt !== null && Date.now() > this.roundEndsAt + this.timing.graceMs) return null;
     player.draft = hex;
     return null;
   }
 
+  /**
+   * Memory mode: a pick or draft while the color is still on screen would be a
+   * copy, not a memory. Anything from the moment it hides is accepted (the
+   * static after it is a safety margin for a client clock that runs a little
+   * ahead), so a fair pick right at the unlock is never refused.
+   */
+  private tooEarly(now: number): boolean {
+    return this.roundHideAt !== null && now < this.roundHideAt;
+  }
+
   private beginRound(index: number): void {
+    const now = Date.now();
     this.phase = 'picking';
     this.roundIndex = index;
-    this.roundStartedAt = Date.now();
+    this.afterReveal = null;
+    if (this.settings.mode === 'memory') {
+      this.roundHideAt = now + this.settings.memorizeSeconds * 1000;
+      this.roundStartedAt = this.roundHideAt + MEMORY_STATIC_MS;
+    } else {
+      this.roundHideAt = null;
+      this.roundStartedAt = now;
+    }
+    // The time to pick (and the grace after it) counts from the unlock.
     this.roundEndsAt = this.unlimited ? null : this.roundStartedAt + this.settings.roundSeconds * 1000;
     for (const p of this.players.values()) {
       p.pick = null;
       p.draft = null;
     }
     this.each((p) => this.roundMessage(p));
-    if (this.unlimited) {
+    if (this.roundEndsAt === null) {
       // No deadline: the round ends when every connected player has locked in.
       this.clearTimer();
     } else {
-      this.schedule(this.settings.roundSeconds * 1000 + this.timing.graceMs, () => this.closeRound());
+      this.schedule(this.roundEndsAt - now + this.timing.graceMs, () => this.closeRound());
     }
+  }
+
+  /** Solo only: skip the rest of the pause after a round result. */
+  next(player: Player): ErrorResult | null {
+    if (this.phase !== 'reveal' || !this.afterReveal) {
+      return err('wrong_phase', 'There is no round result to skip.');
+    }
+    if (!player.conn || this.connectedCount() !== 1) {
+      return err('solo_only', 'Everyone moves on together in a game with other players.');
+    }
+    this.touch();
+    const go = this.afterReveal;
+    this.afterReveal = null;
+    this.clearTimer();
+    go();
+    return null;
   }
 
   private submittedCount(): number {
@@ -462,11 +530,18 @@ export class Room {
     };
     const reveal = this.lastReveal;
     this.each(() => reveal);
-    this.schedule(this.timing.revealMs, () => (isLast ? this.finish() : this.beginRound(index + 1)));
+    const after = () => (isLast ? this.finish() : this.beginRound(index + 1));
+    this.afterReveal = after;
+    this.schedule(this.timing.revealMs, () => {
+      this.afterReveal = null;
+      after();
+    });
   }
 
   private finish(): void {
     this.phase = 'final';
+    this.afterReveal = null;
+    this.roundHideAt = null;
     this.clearTimer();
     try {
       if (this.gameId) this.store.finishGame(this.gameId, Date.now());
@@ -525,12 +600,18 @@ export class Room {
   }
 
   private roundMessage(p: Player): ServerMessage {
+    const now = Date.now();
+    const memory = this.roundHideAt !== null;
+    // Once hidden, the color is never sent again (a reconnect must not show it).
+    const hidden = memory && now >= (this.roundHideAt as number);
     return {
       t: 'round',
-      serverNow: Date.now(),
+      serverNow: now,
       index: this.roundIndex,
       total: this.settings.rounds,
-      color: this.colors[this.roundIndex] as string,
+      color: hidden ? null : (this.colors[this.roundIndex] as string),
+      hideAt: this.roundHideAt,
+      unlockAt: memory ? this.roundStartedAt : null,
       endsAt: this.roundEndsAt,
       submitted: this.submittedCount(),
       expected: this.connectedCount(),

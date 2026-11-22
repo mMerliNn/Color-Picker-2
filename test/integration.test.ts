@@ -198,9 +198,10 @@ describe('websocket', () => {
       b.ws.on('message', (data) => {
         const m = JSON.parse(String(data)) as ServerMessage;
         if (m.t !== 'round') return;
-        seen.get(b)!.push(m.color);
+        const color = m.color!;
+        seen.get(b)!.push(color);
         const hex =
-          b === host ? m.color : b === guests[0] ? '#808080' : m.color.replace(/.$/, (c) => (c === '0' ? '1' : '0'));
+          b === host ? color : b === guests[0] ? '#808080' : color.replace(/.$/, (c) => (c === '0' ? '1' : '0'));
         b.send({ t: 'pick', hex });
       });
     }

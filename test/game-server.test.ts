@@ -127,7 +127,7 @@ describe('lobby', () => {
     send(bob, { t: 'settings', settings: { rounds: 5 } });
     expect(bob.conn.last('error')?.code).toBe('not_host');
     send(clients[0]!, { t: 'settings', settings: { rounds: 5, roundSeconds: 30 } });
-    expect(bob.conn.last('state')!.settings).toEqual({ rounds: 5, roundSeconds: 30 });
+    expect(bob.conn.last('state')!.settings).toMatchObject({ rounds: 5, roundSeconds: 30 });
   });
 
   it('transfers host when the host disconnects', () => {
@@ -200,7 +200,7 @@ describe('validation and abuse', () => {
 
 describe('a full game', () => {
   function target(c: Client): string {
-    return c.conn.last('round')!.color;
+    return c.conn.last('round')!.color!;
   }
 
   it('gives everyone the same colors, scores on the server and logs every pick', () => {
@@ -680,5 +680,210 @@ describe('clock sync (ping / pong)', () => {
     vi.advanceTimersByTime(4000);
     send(clients[0]!, { t: 'ping', c: 1 });
     expect(clients[0]!.conn.last('pong')!.serverNow).toBe(Date.now());
+  });
+});
+
+describe('memory mode', () => {
+  const round = (c: Client) => c.conn.last('round')!;
+  /** The real target, as a player saw it while it was on screen. */
+  const seen = (c: Client) => c.conn.all('round').find((m) => m.index === round(c).index && m.color)!.color!;
+  const memoryLobby = (names: string[], extra: object = {}) =>
+    lobby(names, { rounds: 5, roundSeconds: 15, mode: 'memory', memorizeSeconds: 3, ...extra });
+
+  it('is a host setting with fixed show times', () => {
+    const { clients } = lobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    send(ann, { t: 'settings', settings: { mode: 'memory', memorizeSeconds: 5 } });
+    expect(bob.conn.last('state')!.settings).toMatchObject({ mode: 'memory', memorizeSeconds: 5 });
+    send(bob, { t: 'settings', settings: { mode: 'classic' } });
+    expect(bob.conn.last('error')?.code).toBe('not_host');
+    for (const settings of [{ mode: 'blind' }, { memorizeSeconds: 4 }, { memorizeSeconds: '3' }]) {
+      send(ann, { t: 'settings', settings });
+      expect(ann.conn.last('error')?.code).toBe('bad_message');
+    }
+    expect(ann.conn.last('state')!.settings).toMatchObject({ mode: 'memory', memorizeSeconds: 5 });
+  });
+
+  it('defaults to classic, where nothing is hidden', () => {
+    const { clients } = lobby(['Ann']);
+    start(clients[0]!);
+    expect(round(clients[0]!)).toMatchObject({ hideAt: null, unlockAt: null });
+    expect(round(clients[0]!).color).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it('shows the color, hides it, then counts the round time from the unlock', () => {
+    const { clients } = memoryLobby(['Ann']);
+    start(clients[0]!);
+    const r = round(clients[0]!);
+    expect(r.color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(r.hideAt! - r.serverNow).toBe(3000);
+    expect(r.unlockAt! - r.hideAt!).toBe(1000); // the static
+    expect(r.endsAt! - r.unlockAt!).toBe(15_000);
+  });
+
+  it('refuses a pick or draft while the color is on screen, and accepts it once hidden', () => {
+    const { clients } = memoryLobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    const color = seen(ann);
+    send(ann, { t: 'pick', hex: color });
+    expect(ann.conn.last('error')).toMatchObject({ code: 'wrong_phase', message: 'Wait for the picker to unlock.' });
+    expect(ann.conn.last('picked')).toBeUndefined();
+    send(bob, { t: 'draft', hex: color }); // ignored quietly
+    expect(bob.conn.last('error')).toBeUndefined();
+
+    vi.advanceTimersByTime(3000); // hidden (the static still runs)
+    send(ann, { t: 'pick', hex: color });
+    expect(ann.conn.last('picked')?.hex).toBe(color);
+
+    vi.advanceTimersByTime(1000 + 15_000 + GRACE); // Bob never picks: his early draft did not count
+    const reveal = ann.conn.last('reveal')!;
+    expect(reveal.results.find((x) => x.name === 'Ann')).toMatchObject({ score: 100, timeMs: 0 });
+    expect(reveal.results.find((x) => x.name === 'Bob')).toMatchObject({ pick: null, score: 0 });
+  });
+
+  it('times a pick from the unlock, not from when the color appeared', () => {
+    const { clients } = memoryLobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(3000 + 1000 + 2500);
+    send(ann, { t: 'pick', hex: seen(ann) });
+    send(bob, { t: 'pick', hex: seen(bob) });
+    expect(ann.conn.last('reveal')!.results.find((x) => x.name === 'Ann')!.timeMs).toBe(2500);
+  });
+
+  it('keeps the round open for the whole picking time after the color and static', () => {
+    const { clients } = memoryLobby(['Ann']);
+    start(clients[0]!);
+    vi.advanceTimersByTime(3000 + 1000 + 15_000 + GRACE - 1);
+    expect(clients[0]!.conn.last('reveal')).toBeUndefined();
+    vi.advanceTimersByTime(1);
+    expect(clients[0]!.conn.last('reveal')!.results[0]).toMatchObject({ pick: null, score: 0 });
+  });
+
+  it('never sends the color again once it has been hidden', () => {
+    const { clients, code } = memoryLobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    const color = seen(bob);
+
+    // Reconnecting while it is still on screen: shown again, until the same hide time.
+    vi.advanceTimersByTime(1000);
+    server.disconnect(bob.session);
+    const early = { ...connect('Bob'), clientId: bob.clientId };
+    join(early, code);
+    expect(round(early)).toMatchObject({ color, hideAt: round(ann).hideAt });
+
+    // Reconnecting after it was hidden: no color at all.
+    vi.advanceTimersByTime(2500);
+    server.disconnect(early.session);
+    const late = { ...connect('Bob'), clientId: bob.clientId };
+    join(late, code);
+    expect(round(late)).toMatchObject({ color: null, unlockAt: round(ann).unlockAt, index: 0 });
+    expect(JSON.stringify(late.conn.msgs)).not.toContain(color);
+
+    // The result reveals it as usual.
+    send(ann, { t: 'pick', hex: seen(ann) });
+    send(late, { t: 'pick', hex: '#808080' });
+    expect(late.conn.last('reveal')!.target).toBe(color);
+  });
+
+  it('logs the mode with each game and leaves memory picks out of the stats', () => {
+    const { clients } = memoryLobby(['Ann']);
+    const [ann] = clients as [Client];
+    start(ann);
+    vi.advanceTimersByTime(3000);
+    send(ann, { t: 'pick', hex: seen(ann) });
+    expect(store.listGames()[0]).toMatchObject({ mode: 'memory', memorize_seconds: 3 });
+    expect(store.countPicks()).toBe(1);
+    expect(store.picksForClient(ann.clientId)).toEqual([]);
+    expect(store.globalHueBins().overall.n).toBe(0);
+  });
+
+  it('logs classic games as classic, with their picks in the stats', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5 });
+    const [ann] = clients as [Client];
+    start(ann);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(store.listGames()[0]).toMatchObject({ mode: 'classic', memorize_seconds: null });
+    expect(store.picksForClient(ann.clientId)).toHaveLength(1);
+  });
+});
+
+describe('skipping the pause after a round result (solo only)', () => {
+  const pickTarget = (c: Client) => send(c, { t: 'pick', hex: c.conn.last('round')!.color! });
+
+  it('goes straight to the next round, and from the last round to the final results', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5 });
+    const [ann] = clients as [Client];
+    start(ann);
+    for (let i = 0; i < 5; i++) {
+      expect(ann.conn.last('round')!.index).toBe(i);
+      pickTarget(ann);
+      expect(ann.conn.last('reveal')!.index).toBe(i);
+      send(ann, { t: 'next' });
+    }
+    expect(ann.conn.last('final')!.yourRounds).toHaveLength(5);
+    expect(ann.conn.last('error')).toBeUndefined();
+    vi.advanceTimersByTime(60_000); // the skipped pauses never fire later
+    expect(ann.conn.all('round')).toHaveLength(5);
+    expect(ann.conn.all('final')).toHaveLength(1);
+  });
+
+  it('is refused while others are playing, and nothing moves', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    pickTarget(ann);
+    pickTarget(bob);
+    send(ann, { t: 'next' });
+    expect(ann.conn.last('error')?.code).toBe('solo_only');
+    expect(ann.conn.all('round')).toHaveLength(1);
+    vi.advanceTimersByTime(7000);
+    expect(ann.conn.all('round')).toHaveLength(2);
+  });
+
+  it('is allowed once everyone else has gone', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    pickTarget(ann);
+    server.disconnect(bob.session);
+    send(ann, { t: 'next' });
+    expect(ann.conn.all('round')).toHaveLength(2);
+  });
+
+  it('only applies to a round result', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5 });
+    start(clients[0]!);
+    send(clients[0]!, { t: 'next' });
+    expect(clients[0]!.conn.last('error')?.code).toBe('wrong_phase');
+  });
+});
+
+describe('quitting mid-game', () => {
+  it('ends a solo game: no more rounds are played or logged', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5 });
+    const [ann] = clients as [Client];
+    start(ann);
+    send(ann, { t: 'pick', hex: ann.conn.last('round')!.color! });
+    send(ann, { t: 'leave' });
+    const rounds = ann.conn.all('round').length;
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(ann.conn.all('round')).toHaveLength(rounds);
+    expect(store.countPicks()).toBe(1);
+    expect(store.listGames()[0]!.ended_at).toBeNull(); // logged as unfinished
+  });
+
+  it('lets the others play on without the player who quit', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    send(bob, { t: 'leave' });
+    send(ann, { t: 'pick', hex: ann.conn.last('round')!.color! });
+    const reveal = ann.conn.last('reveal')!; // not waiting for Bob
+    expect(reveal.results.find((r) => r.name === 'Bob')!.score).toBe(0);
+    vi.advanceTimersByTime(7000);
+    expect(ann.conn.last('round')!.index).toBe(1);
   });
 });

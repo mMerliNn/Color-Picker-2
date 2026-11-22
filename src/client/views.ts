@@ -2,10 +2,14 @@ import 'vanilla-colorful/hex-color-picker.js';
 import { formatClock, formatSeconds, matchLabel } from '../shared/labels.js';
 import {
   MAX_NAME_LENGTH,
+  MEMORIZE_OPTIONS,
+  MEMORY_STATIC_MS,
+  MODE_OPTIONS,
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
   SECONDS_OPTIONS,
   UNLIMITED_SECONDS,
+  type GameMode,
   type Standing,
 } from '../shared/protocol.js';
 import type { Ctx, View } from './ctx.js';
@@ -121,6 +125,33 @@ export function homeView(ctx: Ctx): View {
 // Lobby
 // ---------------------------------------------------------------------------
 
+/** A row of radio buttons (one choice), labelled by the element with `labelId`. */
+function segmented<T extends string | number>(
+  labelId: string,
+  options: readonly T[],
+  label: (v: T) => string,
+  onPick: (v: T) => void,
+): { el: HTMLElement; set(value: T, disabled: boolean): void } {
+  const buttons = options.map((v) => {
+    const b = h('button', { type: 'button', role: 'radio', 'aria-checked': 'false' }, label(v));
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-checked') !== 'true') onPick(v);
+    });
+    return b;
+  });
+  const el = h('div', { class: 'seg', role: 'radiogroup', 'aria-labelledby': labelId }, ...buttons);
+  return {
+    el,
+    set(value, disabled) {
+      options.forEach((v, i) => {
+        const b = buttons[i] as HTMLButtonElement;
+        b.setAttribute('aria-checked', String(v === value));
+        b.disabled = disabled;
+      });
+    },
+  };
+}
+
 export function lobbyView(ctx: Ctx): View {
   const room = () => ctx.model.room!;
   const link = `${location.origin}/?room=${room().code}`;
@@ -159,9 +190,21 @@ export function lobbyView(ctx: Ctx): View {
   }
   roundsSel.addEventListener('change', () => ctx.actions.setSettings({ rounds: Number(roundsSel.value) }));
   secondsSel.addEventListener('change', () => ctx.actions.setSettings({ roundSeconds: Number(secondsSel.value) }));
+  const modeSeg = segmented<GameMode>('mode-label', MODE_OPTIONS, (m) => (m === 'classic' ? 'Classic' : 'Memory'), (m) =>
+    ctx.actions.setSettings({ mode: m }),
+  );
+  const memoSeg = segmented<number>('memo-label', MEMORIZE_OPTIONS, (n) => `${n} s`, (n) =>
+    ctx.actions.setSettings({ memorizeSeconds: n }),
+  );
+  const memoLabel = h('span', { id: 'memo-label', class: 'seg-label' }, 'Show color for');
+  const modeHint = h('p', { class: 'muted fine mode-hint' });
   const settings = h(
     'div',
     { class: 'settings' },
+    h('span', { id: 'mode-label', class: 'seg-label' }, 'Mode'),
+    modeSeg.el,
+    memoLabel,
+    memoSeg.el,
     h('label', { for: 'rounds' }, 'Length'),
     roundsSel,
     h('label', { for: 'seconds' }, 'Time per round'),
@@ -188,6 +231,7 @@ export function lobbyView(ctx: Ctx): View {
     count,
     list,
     settings,
+    modeHint,
     unlimitedHint,
     startBtn,
     waiting,
@@ -213,6 +257,16 @@ export function lobbyView(ctx: Ctx): View {
           ),
         );
       }
+      const memory = r.settings.mode === 'memory';
+      modeSeg.set(r.settings.mode, !isHost);
+      memoSeg.set(r.settings.memorizeSeconds, !isHost);
+      memoLabel.hidden = memoSeg.el.hidden = !memory;
+      setText(
+        modeHint,
+        memory
+          ? `Memory: each color shows for ${r.settings.memorizeSeconds} seconds, then disappears behind a moment of static. Match it from memory.`
+          : 'Classic: the color stays on screen while you match it.',
+      );
       roundsSel.value = String(r.settings.rounds);
       secondsSel.value = String(r.settings.roundSeconds);
       // Unlimited is solo-only: unavailable while anyone else is in the room.
@@ -241,6 +295,7 @@ export function countdownView(ctx: Ctx): View {
     h('h2', null, 'Get ready!'),
     number,
     h('p', { class: 'muted' }, 'The first color appears when the countdown ends.'),
+    quitLink(ctx),
   );
   return {
     el,
@@ -260,6 +315,12 @@ export function playView(ctx: Ctx): View {
   const round = ctx.model.round!;
   const unlimited = round.endsAt === null; // solo game without a time limit
   const totalMs = ctx.model.room!.settings.roundSeconds * 1000;
+  // Memory mode: the color shows until hideAt, then static until unlockAt, then
+  // the player picks from memory. Classic: both are null and picking starts now.
+  const memory = round.unlockAt !== null;
+  const hideAt = round.hideAt ?? 0;
+  const unlockAt = round.unlockAt ?? 0;
+  const watchMs = ctx.model.room!.settings.memorizeSeconds * 1000;
   let current = round.youPick ?? NEUTRAL;
   let locked = round.youPick !== null;
   // Only a color the player actually chose is auto-submitted at the deadline.
@@ -281,7 +342,6 @@ export function playView(ctx: Ctx): View {
     if (!locked && touched && !draftTimer) draftTimer = setTimeout(flushDraft, 250);
   };
 
-  const target = swatch(round.color, 'Target color', 'target');
   const mine = swatch(current, 'Your color');
   const hexInput = h('input', {
     type: 'text',
@@ -303,6 +363,8 @@ export function playView(ctx: Ctx): View {
     picker.addEventListener(type, (e) => e.cancelable && e.preventDefault(), { passive: false });
   }
 
+  // Memory mode keeps the picker locked until the color has been hidden.
+  let unlocked = !memory;
   const setCurrent = (hex: string, fromInput = false) => {
     current = hex;
     mine.style.backgroundColor = hex;
@@ -313,18 +375,18 @@ export function playView(ctx: Ctx): View {
   // The picker fires this only when the user actually moves it (never for
   // programmatic changes), so it is a reliable "the player chose this color".
   picker.addEventListener('color-changed', (e) => {
-    if (locked) return;
+    if (locked || !unlocked) return;
     touched = true;
     setCurrent((e as CustomEvent<{ value: string }>).detail.value);
   });
   const markTouched = () => {
-    touched = true;
+    if (unlocked) touched = true;
   };
   picker.addEventListener('pointerdown', markTouched);
   picker.addEventListener('keydown', markTouched);
   hexInput.addEventListener('input', () => {
     const hex = normalizeHex(hexInput.value);
-    if (hex && !locked) {
+    if (hex && !locked && unlocked) {
       touched = true;
       setCurrent(hex, true);
       picker.color = hex;
@@ -336,6 +398,29 @@ export function playView(ctx: Ctx): View {
   const bar = h('div', { class: 'timer-fill' });
   const progress = h('p', { class: 'muted center', role: 'status' });
   const submitBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Lock in');
+  const announce = h('p', { class: 'sr-only', role: 'status' });
+
+  // ---- the stage ----
+  // Classic: target and your color side by side. Memory: while watching (and
+  // during the static) one wide color is laid over the two squares, which stay
+  // in place but invisible, so the stage is the same height in every phase and
+  // nothing below it ever moves. Then the target square shows a "?".
+  const targetCaption = h('figcaption', null, memory ? 'From memory' : 'Match this');
+  const targetSlot = memory
+    ? h('div', { class: 'swatch memory-hidden', role: 'img', 'aria-label': 'Target color: hidden' }, h('span', { 'aria-hidden': 'true' }, '?'))
+    : swatch(round.color, 'Target color', 'target');
+  const stage = h(
+    'div',
+    { class: 'stage' },
+    h('figure', null, targetSlot, targetCaption),
+    h('figure', null, mine, h('figcaption', null, 'Your color')),
+  );
+  const wideCaption = h('figcaption', null, 'Watch carefully');
+  const wide = h('figure', { class: 'memory-wide' });
+  // In memory mode the hex code never goes into the page, not even for screen readers.
+  const shown = round.color ? swatch(round.color, 'Target color') : null;
+  shown?.setAttribute('aria-label', 'Target color: watch carefully');
+  const noise = h('div', { class: 'swatch memory-noise', 'aria-hidden': 'true' });
 
   const lock = () => {
     locked = true;
@@ -348,34 +433,64 @@ export function playView(ctx: Ctx): View {
     if (round.youPick) setCurrent(round.youPick);
   };
   const submit = () => {
-    if (locked) return;
+    if (locked || !unlocked) return;
     if (ctx.actions.pick(current)) lock();
   };
   submitBtn.addEventListener('click', submit);
-  if (locked) lock();
 
   const el = h(
     'section',
-    { class: 'card play' },
+    { class: `card play${memory ? ' memory' : ''}` },
     h(
       'div',
       { class: 'play-head' },
       h('h2', null, `Round ${round.index + 1} of ${round.total}`),
       timeLabel,
     ),
-    h('div', { class: 'timer', 'aria-hidden': 'true', hidden: unlimited }, bar),
-    h(
-      'div',
-      { class: 'stage' },
-      h('figure', null, target, h('figcaption', null, 'Match this')),
-      h('figure', null, mine, h('figcaption', null, 'Your color')),
-    ),
+    h('div', { class: 'timer', 'aria-hidden': 'true', hidden: unlimited && !memory }, bar),
+    stage,
     picker,
     h('div', { class: 'row center' }, h('label', { for: 'hex', class: 'muted' }, 'Hex'), hexInput),
     submitBtn,
     progress,
+    quitLink(ctx),
+    announce,
   );
   hexInput.id = 'hex';
+
+  // ---- memory phases ----
+  type Phase = 'watch' | 'static' | 'pick';
+  let phase: Phase | null = null;
+  const enter = (next: Phase) => {
+    if (phase === next) return;
+    phase = next;
+    el.dataset.phase = next;
+    if (next === 'watch' && shown) {
+      wide.replaceChildren(shown, wideCaption);
+      stage.append(wide);
+      setText(announce, 'Watch the color carefully. It will be hidden in a moment.');
+    } else if (next === 'static' || (next === 'watch' && !shown)) {
+      setText(wideCaption, '…');
+      wide.replaceChildren(noise, wideCaption);
+      stage.append(wide);
+    } else if (next === 'pick') {
+      wide.remove();
+      unlocked = true;
+      if (!locked) {
+        picker.removeAttribute('inert');
+        hexInput.disabled = false;
+        submitBtn.disabled = false;
+        setText(submitBtn, 'Lock in');
+      }
+      if (memory) setText(announce, 'The color is hidden. Pick it from memory.');
+    }
+  };
+  if (memory) {
+    picker.setAttribute('inert', '');
+    hexInput.disabled = true;
+    submitBtn.disabled = true;
+  }
+  if (locked) lock();
 
   const view: View = {
     el,
@@ -390,8 +505,31 @@ export function playView(ctx: Ctx): View {
       queueDraft(); // after a reconnect: resend the draft if the last one never got through
     },
     tick() {
-      if (round.endsAt === null) return; // no deadline: nothing to count down
-      const remaining = round.endsAt - ctx.now();
+      const now = ctx.now();
+      if (memory && now < unlockAt) {
+        if (now < hideAt && shown) {
+          enter('watch');
+          const left = hideAt - now;
+          bar.style.transform = `scaleX(${Math.min(1, left / watchMs).toFixed(3)})`;
+          setText(timeLabel, String(seconds(left)));
+        } else {
+          enter('static');
+          bar.style.transform = 'scaleX(1)';
+          setText(timeLabel, unlimited ? 'No time limit' : formatClock(seconds(totalMs)));
+        }
+        if (!locked) setText(submitBtn, `Picker unlocks in ${seconds(unlockAt - now)}`);
+        return;
+      }
+      if (memory) enter('pick');
+      if (round.endsAt === null) {
+        // No deadline: nothing to count down.
+        if (memory) {
+          bar.style.transform = 'scaleX(1)';
+          setText(timeLabel, 'No time limit');
+        }
+        return;
+      }
+      const remaining = round.endsAt - now;
       // The bar moves by transform (cheap); text and class change only when their value does.
       const fraction = Math.max(0, Math.min(1, remaining / totalMs));
       bar.style.transform = `scaleX(${fraction.toFixed(3)})`;
@@ -440,9 +578,12 @@ function standingsTable(rows: Standing[], youId: string, withAvg: boolean): HTML
 
 export function revealView(ctx: Ctx): View {
   const rv = ctx.model.reveal!;
-  const youId = ctx.model.room!.youId;
+  const room = ctx.model.room!;
+  const youId = room.youId;
   const mine = rv.results.find((r) => r.id === youId);
   const isLast = rv.index >= rv.total - 1;
+  const memory = room.settings.mode === 'memory';
+  const revealMs = Math.max(1, rv.nextAt - rv.serverNow);
 
   const headline =
     mine && mine.deltaE !== null
@@ -450,6 +591,8 @@ export function revealView(ctx: Ctx): View {
       : 'No pick this round  ·  +0 points';
 
   const countdown = h('p', { class: 'muted center', role: 'status' });
+  const timeLabel = h('span', { class: 'time-label', 'aria-hidden': 'true' });
+  const bar = h('div', { class: 'timer-fill' });
   const roundList = h('ol', { class: 'round-results' });
   for (const r of rv.results) {
     roundList.append(
@@ -464,31 +607,91 @@ export function revealView(ctx: Ctx): View {
     );
   }
 
+  // Alone in the room: no need to wait for anyone, so the pause can be skipped.
+  const solo = room.players.filter((p) => p.connected).length === 1;
+  const skipBtn = h('button', { class: 'btn primary big', type: 'button', hidden: !solo }, isLast ? 'Final results' : 'Next round');
+  skipBtn.addEventListener('click', () => {
+    skipBtn.disabled = true;
+    ctx.actions.next();
+  });
+
+  // Same header, timer bar and stage position as the round itself, so the
+  // result appears in the same place: the target (hidden in memory mode)
+  // simply turns into the real color next to the pick.
   const el = h(
     'section',
     { class: 'card reveal' },
-    h('h2', null, `Round ${rv.index + 1} result`),
+    h('div', { class: 'play-head' }, h('h2', null, `Round ${rv.index + 1} result`), timeLabel),
+    h('div', { class: 'timer quiet', 'aria-hidden': 'true' }, bar),
     h(
       'div',
       { class: 'stage' },
-      h('figure', null, swatch(rv.target, 'Target color', 'target'), h('figcaption', null, 'Target')),
+      h('figure', null, swatch(rv.target, 'Target color', memory ? 'target reveal-in' : 'target'), h('figcaption', null, memory ? 'The color' : 'Target')),
       h('figure', null, swatch(mine?.pick ?? null, 'Your pick', 'target'), h('figcaption', null, 'Your pick')),
     ),
     h('p', { class: 'headline', role: 'status' }, headline),
+    skipBtn,
     countdown,
     h('h3', null, 'This round'),
     roundList,
     h('h3', null, 'Standings'),
     standingsTable(rv.standings, youId, true),
+    quitLink(ctx),
   );
 
   return {
     el,
+    update() {
+      const alone = ctx.model.room?.players.filter((p) => p.connected).length === 1;
+      skipBtn.hidden = !alone;
+    },
     tick() {
-      const s = seconds(rv.nextAt - ctx.now());
+      const left = rv.nextAt - ctx.now();
+      const s = seconds(left);
+      bar.style.transform = `scaleX(${Math.max(0, Math.min(1, left / revealMs)).toFixed(3)})`;
+      setText(timeLabel, String(s));
       setText(countdown, `${isLast ? 'Final results' : 'Next round'} in ${s}s`);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Quit: a quiet link under the countdown, every round and every round result
+// (all modes). It asks first, so a stray tap never ends a game.
+// ---------------------------------------------------------------------------
+
+function quitLink(ctx: Ctx): HTMLElement {
+  const btn = h('button', { class: 'btn link quit-link', type: 'button' }, 'Quit game');
+  btn.addEventListener('click', () => {
+    const room = ctx.model.room;
+    const others = room ? room.players.filter((p) => p.connected && p.id !== room.youId).length : 0;
+    const yes = h('button', { class: 'btn primary', type: 'button' }, 'Quit');
+    const no = h('button', { class: 'btn', type: 'button' }, 'Keep playing');
+    const dialog = h(
+      'dialog',
+      { class: 'quit-dialog', 'aria-labelledby': 'quit-title' },
+      h('h3', { id: 'quit-title' }, 'Quit this game?'),
+      h(
+        'p',
+        { class: 'muted' },
+        others === 0
+          ? 'The game ends here and you go back to the start screen.'
+          : 'You’ll leave the room and go back to the start screen. The others keep playing without you.',
+      ),
+      h('div', { class: 'quit-actions' }, no, yes),
+    );
+    no.addEventListener('click', () => dialog.close());
+    yes.addEventListener('click', () => {
+      dialog.close();
+      ctx.actions.leave();
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    // Inside the view, so it disappears with it if the screen changes meanwhile.
+    btn.after(dialog);
+    dialog.showModal();
+    no.focus(); // the safe choice has focus, so Enter does not quit by accident
+  });
+  return btn;
 }
 
 // ---------------------------------------------------------------------------
