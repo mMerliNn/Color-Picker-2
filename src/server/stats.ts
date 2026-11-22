@@ -12,6 +12,7 @@ import {
   type StatsResponse,
   type Totals,
 } from '../shared/stats.js';
+import type { GameMode } from '../shared/protocol.js';
 import type { GameStore, GlobalBin, PickRow } from './db.js';
 
 interface Answered extends PickRow {
@@ -281,9 +282,9 @@ function buildInsights(
 
 // ---------------------------------------------------------------------------
 
-/** Reads from the store and caches the (whole-population) comparison numbers. */
+/** Reads from the store and caches the (whole-population) comparison numbers, per game mode. */
 export class StatsService {
-  private cache: { at: number; value: GlobalStats } | null = null;
+  private readonly cache = new Map<GameMode, { at: number; value: GlobalStats }>();
 
   constructor(
     private readonly store: GameStore,
@@ -291,21 +292,25 @@ export class StatsService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  forClient(clientId: string): StatsResponse {
-    return computeStats(this.store.picksForClient(clientId), this.global());
+  /** One player's analysis for one game mode, compared with everyone in that mode. */
+  forClient(clientId: string, mode: GameMode = 'classic'): StatsResponse {
+    return computeStats(this.store.picksForClient(clientId, mode), this.global(mode));
   }
 
+  /** Removes the player's history in every mode. */
   deleteClient(clientId: string): number {
     const removed = this.store.deleteClientData(clientId);
-    this.cache = null;
+    this.cache.clear();
     return removed;
   }
 
-  private global(): GlobalStats {
+  private global(mode: GameMode): GlobalStats {
     const t = this.now();
-    if (!this.cache || t - this.cache.at >= this.cacheMs) {
-      this.cache = { at: t, value: this.store.globalHueBins() };
+    let entry = this.cache.get(mode);
+    if (!entry || t - entry.at >= this.cacheMs) {
+      entry = { at: t, value: this.store.globalHueBins(mode) };
+      this.cache.set(mode, entry);
     }
-    return this.cache.value;
+    return entry.value;
   }
 }

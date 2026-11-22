@@ -19,6 +19,10 @@ export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
  */
 export const MODE_OPTIONS = ['classic', 'memory'] as const;
 export type GameMode = (typeof MODE_OPTIONS)[number];
+
+export function isGameMode(value: unknown): value is GameMode {
+  return typeof value === 'string' && (MODE_OPTIONS as readonly string[]).includes(value);
+}
 /** Memory mode: how long the color is shown, in seconds. */
 export const MEMORIZE_OPTIONS = [2, 3, 5] as const;
 /** Memory mode: static between hiding the color and unlocking the picker. */
@@ -31,7 +35,7 @@ export interface GameSettings {
   memorizeSeconds: number; // memory mode only
 }
 
-export const DEFAULT_SETTINGS: GameSettings = { rounds: 10, roundSeconds: 20, mode: 'classic', memorizeSeconds: 3 };
+export const DEFAULT_SETTINGS: GameSettings = { rounds: 5, roundSeconds: 20, mode: 'classic', memorizeSeconds: 3 };
 
 export interface PlayerInfo {
   id: string; // public, per-room id (never the private clientId)
@@ -198,8 +202,8 @@ export function cleanSettings(raw: unknown): Partial<GameSettings> | null {
     out.roundSeconds = r.roundSeconds as number;
   }
   if (r.mode !== undefined) {
-    if (!MODE_OPTIONS.includes(r.mode as GameMode)) return null;
-    out.mode = r.mode as GameMode;
+    if (!isGameMode(r.mode)) return null;
+    out.mode = r.mode;
   }
   if (r.memorizeSeconds !== undefined) {
     if (!MEMORIZE_OPTIONS.includes(r.memorizeSeconds as (typeof MEMORIZE_OPTIONS)[number])) return null;

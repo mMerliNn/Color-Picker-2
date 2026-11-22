@@ -2,7 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
-import { isClientId, type ServerMessage } from '../shared/protocol.js';
+import { isClientId, isGameMode, type ServerMessage } from '../shared/protocol.js';
+import { DEFAULT_STATS_MODE, statsModeFromPath } from '../shared/stats.js';
 import { GameStore } from './db.js';
 import { GameServer, type GameServerOptions } from './game-server.js';
 import type { Conn } from './room.js';
@@ -125,19 +126,22 @@ async function handleApi(
     return;
   }
   let clientId: unknown;
+  let mode: unknown;
   try {
-    clientId = (JSON.parse(raw) as { clientId?: unknown }).clientId;
+    ({ clientId, mode } = JSON.parse(raw) as { clientId?: unknown; mode?: unknown });
   } catch {
     json(400, { error: 'bad_request' });
     return;
   }
-  if (!isClientId(clientId)) {
+  // `mode` picks the game mode's analysis page; leaving it out means the default page.
+  if (mode === undefined) mode = DEFAULT_STATS_MODE;
+  if (!isClientId(clientId) || !isGameMode(mode)) {
     json(400, { error: 'bad_request' });
     return;
   }
   // Unknown ids simply get empty statistics, so the endpoint cannot be used to
   // find out which ids exist.
-  if (pathname === '/api/stats') json(200, stats.forClient(clientId));
+  if (pathname === '/api/stats') json(200, stats.forClient(clientId, mode));
   else json(200, { deleted: stats.deleteClient(clientId) });
 }
 
@@ -169,7 +173,10 @@ async function serveStatic(root: string, req: IncomingMessage, res: ServerRespon
   }
 
   // The stats page is its own entry point (stats.html), not part of the game SPA.
-  if (pathname === '/stats' || pathname === '/stats/') pathname = '/stats.html';
+  // Every game mode has its own page address (/stats, /stats/memory, ...); the
+  // page reads the mode from the address. An unknown mode is treated like any
+  // unknown address (the game page below).
+  if (statsModeFromPath(pathname)) pathname = '/stats.html';
 
   // Resolve inside the static root only (blocks ../ traversal).
   let file = resolve(join(root, normalize(pathname)));

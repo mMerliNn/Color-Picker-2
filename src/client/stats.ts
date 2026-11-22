@@ -1,5 +1,14 @@
 import './styles.css';
-import { hueBinLabel, type BandStat, type StatsResponse } from '../shared/stats.js';
+import { MODE_OPTIONS } from '../shared/protocol.js';
+import {
+  DEFAULT_STATS_MODE,
+  STATS_PAGES,
+  hueBinLabel,
+  statsModeFromPath,
+  statsPath,
+  type BandStat,
+  type StatsResponse,
+} from '../shared/stats.js';
 import {
   barChart,
   divergingChart,
@@ -17,6 +26,14 @@ const clientId = getClientId();
 const app = document.getElementById('app') as HTMLElement;
 const home = `/${profileQuery()}`;
 
+// Each game mode has its own page (/stats, /stats/memory, ...), built from that
+// mode's games only. An address for a mode that does not exist goes to the default.
+const pageMode = statsModeFromPath(location.pathname);
+if (!pageMode) location.replace(`${statsPath(DEFAULT_STATS_MODE)}${profileQuery()}`);
+const mode = pageMode ?? DEFAULT_STATS_MODE;
+const page = STATS_PAGES[mode];
+document.title = `Your color eye · ${page.label} · Color Match`;
+
 // Ordinal ramps (one blue hue, validated for both light and dark surfaces).
 // Same steps in both modes: the lightest clears 2:1 on light, the darkest on dark.
 const RAMP3 = ['#86b6ef', '#3987e5', '#184f95'] as const; // low -> high
@@ -28,10 +45,25 @@ async function api<T>(path: string): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId }),
+    body: JSON.stringify({ clientId, mode }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
+}
+
+/** Links to every mode's page, the current one marked. Built from the mode list, so new modes appear by themselves. */
+function modeSwitcher(): HTMLElement {
+  return h(
+    'nav',
+    { class: 'mode-tabs', 'aria-label': 'Game mode' },
+    ...MODE_OPTIONS.map((m) =>
+      h(
+        'a',
+        { href: `${statsPath(m)}${profileQuery()}`, 'aria-current': m === mode ? 'page' : undefined },
+        STATS_PAGES[m].label,
+      ),
+    ),
+  );
 }
 
 function header(subtitle: string): HTMLElement {
@@ -40,7 +72,8 @@ function header(subtitle: string): HTMLElement {
     { class: 'stats-head' },
     h('a', { class: 'back', href: home }, '← Back to the game'),
     h('h1', null, 'Your color eye'),
-    h('p', { class: 'lead' }, subtitle),
+    modeSwitcher(),
+    h('p', { class: 'lead' }, `${page.intro} ${subtitle}`),
   );
 }
 
@@ -68,11 +101,15 @@ function render(stats: StatsResponse): void {
 
   if (t.rounds === 0) {
     app.append(
-      header('Play a few games and this page will show where your color eye is sharp and where it drifts.'),
+      header(`Play a few ${page.label} games and this page will show where your color eye is sharp and where it drifts.`),
       card(
-        'No games yet',
+        `No ${page.label} games yet`,
         null,
-        h('p', null, 'Your picks are saved as you play, under a random id kept in this browser. Finish a game, then come back here.'),
+        h(
+          'p',
+          null,
+          `Your picks are saved as you play, under a random id kept in this browser. Choose ${page.label} as the mode in the lobby, finish a game, then come back here.`,
+        ),
         h('a', { class: 'btn primary', href: home }, 'Play a game'),
       ),
     );
@@ -80,7 +117,7 @@ function render(stats: StatsResponse): void {
   }
 
   app.append(
-    header(`Based on ${t.rounds} rounds across ${t.games} game${t.games === 1 ? '' : 's'}.`),
+    header(`Based on ${t.rounds} round${t.rounds === 1 ? '' : 's'} across ${t.games} game${t.games === 1 ? '' : 's'}.`),
     h(
       'div',
       { class: 'tiles' },
@@ -279,13 +316,13 @@ function dataCard(): HTMLElement {
         show(ask);
       }
     });
-    show(h('p', null, 'This permanently removes every pick stored for you. It cannot be undone.'), h('div', { class: 'row' }, yes, no));
+    show(h('p', null, 'This permanently removes every pick stored for you, in every game mode. It cannot be undone.'), h('div', { class: 'row' }, yes, no));
   };
   ask.addEventListener('click', confirm);
   show(ask);
   return card(
     'Your data',
-    'Picks are stored under a random id kept in this browser (no account, no email). Clearing your browser data starts a fresh history.',
+    'Picks are stored under a random id kept in this browser (no account, no email). Clearing your browser data starts a fresh history. Deleting removes your history in every game mode.',
     box,
     status,
   );

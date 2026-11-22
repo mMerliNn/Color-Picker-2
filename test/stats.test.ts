@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { PickRow } from '../src/server/db.js';
 import { computeStats, type GlobalStats } from '../src/server/stats.js';
-import { hueBinLabel, hueBinOf } from '../src/shared/stats.js';
+import { MODE_OPTIONS } from '../src/shared/protocol.js';
+import {
+  DEFAULT_STATS_MODE,
+  STATS_PAGES,
+  hueBinLabel,
+  hueBinOf,
+  statsModeFromPath,
+  statsPath,
+} from '../src/shared/stats.js';
 
 const NO_GLOBAL: GlobalStats = { bins: [], overall: { n: 0, avg: null } };
 
@@ -279,6 +287,28 @@ describe('database upgrade', () => {
       again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('one analysis page per game mode', () => {
+  it('has a page for every mode, and its address leads back to it', () => {
+    for (const mode of MODE_OPTIONS) {
+      expect(STATS_PAGES[mode].label.length).toBeGreaterThan(0);
+      expect(statsModeFromPath(statsPath(mode))).toBe(mode);
+      expect(statsModeFromPath(`${statsPath(mode)}/`)).toBe(mode);
+    }
+  });
+
+  it('keeps plain /stats for the default mode and /stats/<mode> for the rest', () => {
+    expect(statsPath(DEFAULT_STATS_MODE)).toBe('/stats');
+    expect(statsPath('memory')).toBe('/stats/memory');
+    expect(statsModeFromPath('/stats/classic')).toBe('classic');
+  });
+
+  it('knows nothing about other addresses or unknown modes', () => {
+    for (const path of ['/', '/stats.html', '/statsx', '/stats/blind', '/stats/memory/x', '/api/stats']) {
+      expect(statsModeFromPath(path)).toBeNull();
     }
   });
 });

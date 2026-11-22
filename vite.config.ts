@@ -1,13 +1,15 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
-// In dev, serve /stats from stats.html (in production the game server does this).
+// In dev, serve /stats and /stats/<mode> from stats.html (in production the game
+// server does this). The page itself sends an unknown mode back to /stats.
 function statsRoute(): Plugin {
   return {
     name: 'stats-route',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        if (req.url && /^\/stats(\/|\?|$)/.test(req.url)) req.url = req.url.replace(/^\/stats\/?/, '/stats.html');
+        const m = req.url ? /^\/stats(?:\/[a-z0-9-]+)?\/?(\?.*)?$/.exec(req.url) : null;
+        if (m) req.url = `/stats.html${m[1] ?? ''}`;
         next();
       });
     },

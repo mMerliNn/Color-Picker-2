@@ -4,7 +4,7 @@ Up to 30 players join a room with a 5-letter code and match the **same set of co
 (5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**), either with the color
 on screen (**Classic**) or from memory (**Memory**). Scores are computed on the server from the CIEDE2000
 color difference, and every pick is stored in SQLite. Each player has a personal
-**history analysis page** (`/stats`): error by hue, lightness/saturation bias, speed vs.
+**history analysis page** for each game mode (`/stats`, `/stats/memory`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
 
 - **Client:** TypeScript + Vite, no framework (about 8 kB gzipped for the game, 5 kB more for the stats page), `vanilla-colorful` picker, hand-written SVG charts
@@ -152,9 +152,7 @@ picks(id, game_id, round, client_id, player_name, target_hex, pick_hex, delta_e,
 `*_l/c/h` are CIE LCH values (hue is NULL for near-grays). Missed rounds have `pick_hex = NULL`.
 `mode` is `classic` or `memory` (`memorize_seconds` is set for memory games only). The columns were
 added in schema version 2; an older database is upgraded on start and its games are marked
-`classic`. The stats page uses **classic games only**: matching from memory is a different skill
-with much bigger errors, and mixing the two would blur every chart. Memory picks are stored with
-everything else, ready for a memory section later.
+`classic`. Each game mode has its own analysis page (below), so the modes are never mixed.
 Examples for the future analysis page:
 
 ```sql
@@ -170,9 +168,24 @@ FROM picks WHERE client_id = ? AND pick_hex IS NOT NULL;
 -- Hue drift needs the wrapped difference (see hueDiff() in src/shared/colors.ts)
 ```
 
-## History analysis page (`/stats`)
+## History analysis page (`/stats`, one page per game mode)
 
 Every player gets a private page about their own play, linked from the home and final screens.
+
+**One page per game mode.** Matching a color on screen and matching it from memory are different
+skills (memory errors are much bigger), so each mode has its own page built from that mode's games
+only, with its own "everyone" comparison: `/stats` for Classic, `/stats/memory` for Memory. A
+switcher at the top of the page moves between them, and the final screen links straight to the page
+of the mode just played. The API takes the mode in the body (`{ clientId, mode }`; no mode means
+Classic, an unknown one is a 400).
+
+*Adding a game mode later:* add it to `MODE_OPTIONS` (`src/shared/protocol.ts`) and give it a
+label and a one-line intro in `STATS_PAGES` (`src/shared/stats.ts`). TypeScript will not compile
+until both are there. The page address (`/stats/<mode>`), the server route, the API, the database
+queries, the per-mode "everyone" cache and the switcher all follow from those two lists, with no
+other changes. If a new mode needs different charts, `src/client/stats.ts` knows which mode it is
+showing (`mode`).
+
 It is computed on the server from the pick log (`src/server/stats.ts`, a pure function with
 tests) and drawn in the browser with small hand-written SVG/HTML charts (`src/client/charts.ts`).
 
@@ -189,7 +202,8 @@ tests) and drawn in the browser with small hand-written SVG/HTML charts (`src/cl
 
 Privacy and security: the page identifies you by the random id the browser keeps in `localStorage`
 (no account). It is sent in a POST body, never in a URL. Other players' ids are never exposed; asking
-for an unknown id returns an empty history. "Delete my history" removes all of a player's picks.
+for an unknown id returns an empty history. "Delete my history" removes all of a player's picks, in
+every game mode.
 Simulated bots (`bot-...` ids) are excluded from the "everyone" numbers. The API endpoints are
 `POST /api/stats` and `POST /api/delete` (rate limited, 512-byte bodies, no CORS headers).
 Limitation: anyone who obtains a player's id (for example from their browser) can read that player's

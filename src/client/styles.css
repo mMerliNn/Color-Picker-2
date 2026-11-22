@@ -593,6 +593,35 @@ button:focus-visible {
 .stats-head .lead {
   margin-bottom: 4px;
 }
+/* One page per game mode: a row of links, styled like the lobby's mode choice. */
+.mode-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+  margin: 0 0 12px;
+}
+.mode-tabs a {
+  font-size: 0.92rem;
+  color: var(--text);
+  text-decoration: none;
+  padding: 6px 16px;
+  border-radius: 7px;
+}
+.mode-tabs a:hover:not([aria-current='page']) {
+  background: var(--accent-soft);
+}
+.mode-tabs a[aria-current='page'] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.mode-tabs a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .tiles {
   display: grid;

@@ -16,6 +16,7 @@ import type { Ctx, View } from './ctx.js';
 import { clear, h, setText, swatch } from './dom.js';
 import { profileQuery } from './identity.js';
 import { openReview } from './review.js';
+import { statsPath } from '../shared/stats.js';
 
 const NEUTRAL = '#808080';
 
@@ -756,7 +757,8 @@ export function finalView(ctx: Ctx): View {
     strip,
     reviewBtn,
     isHost ? againBtn : h('p', { class: 'muted center' }, 'Waiting for the host to start another game…'),
-    h('a', { class: 'btn link', href: `/stats${profileQuery()}` }, 'See my stats'),
+    // Straight to the analysis page of the mode just played.
+    h('a', { class: 'btn link', href: `${statsPath(room.settings.mode)}${profileQuery()}` }, 'See my stats'),
     leaveBtn,
   );
   return { el };

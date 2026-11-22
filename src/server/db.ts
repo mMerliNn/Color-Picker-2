@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { toLch } from '../shared/colors.js';
+import type { GameMode } from '../shared/protocol.js';
 
 /**
  * Persistent log of every game and every pick.
@@ -197,42 +198,42 @@ export class GameStore {
   }
 
   /**
-   * A player's most recent classic picks (misses included), newest first.
-   * Memory-mode picks are left out: matching from memory is a different skill
-   * with much bigger errors, and mixing the two would blur every chart.
+   * A player's most recent picks in one game mode (misses included), newest
+   * first. Modes are never mixed: matching from memory is a different skill with
+   * much bigger errors, and mixing them would blur every chart.
    */
-  picksForClient(clientId: string, limit = 3000): PickRow[] {
+  picksForClient(clientId: string, mode: GameMode = 'classic', limit = 3000): PickRow[] {
     return this.db
       .prepare(
         `SELECT p.game_id, p.round, p.pick_hex, p.delta_e, p.score, p.time_ms,
                 p.target_l, p.target_c, p.target_h, p.pick_l, p.pick_c, p.pick_h, p.created_at
          FROM picks p JOIN games g ON g.id = p.game_id
-         WHERE p.client_id = ? AND g.mode = 'classic'
+         WHERE p.client_id = ? AND g.mode = ?
          ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
       )
-      .all(clientId, limit) as unknown as PickRow[];
+      .all(clientId, mode, limit) as unknown as PickRow[];
   }
 
   /**
-   * Average error of everyone in classic games, per 30-degree hue sector of the
+   * Average error of everyone in one game mode, per 30-degree hue sector of the
    * target. Simulated players (client ids starting with "bot-") are left out.
    */
-  globalHueBins(): { bins: GlobalBin[]; overall: { n: number; avg: number | null } } {
+  globalHueBins(mode: GameMode = 'classic'): { bins: GlobalBin[]; overall: { n: number; avg: number | null } } {
     const bins = this.db
       .prepare(
         `SELECT MIN(11, CAST(p.target_h / 30 AS INTEGER)) AS bin, COUNT(*) AS n, AVG(p.delta_e) AS avg
          FROM picks p JOIN games g ON g.id = p.game_id
          WHERE p.pick_hex IS NOT NULL AND p.target_h IS NOT NULL AND p.client_id NOT LIKE 'bot-%'
-           AND g.mode = 'classic'
+           AND g.mode = ?
          GROUP BY bin`,
       )
-      .all() as unknown as GlobalBin[];
+      .all(mode) as unknown as GlobalBin[];
     const overall = this.db
       .prepare(
         `SELECT COUNT(*) AS n, AVG(p.delta_e) AS avg FROM picks p JOIN games g ON g.id = p.game_id
-         WHERE p.pick_hex IS NOT NULL AND p.client_id NOT LIKE 'bot-%' AND g.mode = 'classic'`,
+         WHERE p.pick_hex IS NOT NULL AND p.client_id NOT LIKE 'bot-%' AND g.mode = ?`,
       )
-      .get() as unknown as { n: number; avg: number | null };
+      .get(mode) as unknown as { n: number; avg: number | null };
     return { bins, overall };
   }
 

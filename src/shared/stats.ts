@@ -1,6 +1,49 @@
 // Shapes and constants for the personal "history analysis" page.
 // Dependency-free, so the browser can import it too.
 
+import { isGameMode, type GameMode } from './protocol.js';
+
+// ---------------------------------------------------------------------------
+// One analysis page per game mode
+//
+// Each mode is a different skill (matching a color on screen is not the same as
+// matching it from memory), so each gets its own page built from its own games
+// only, with its own "everyone" comparison. Pages live at /stats/<mode>; the
+// default mode keeps the plain /stats address.
+//
+// Adding a mode: add it to MODE_OPTIONS (protocol.ts) and give it an entry
+// here. TypeScript refuses to compile until both are done; the server, the API,
+// the page and its mode switcher all pick the new mode up from these two lists.
+// ---------------------------------------------------------------------------
+
+export interface StatsPageInfo {
+  /** Name in the page switcher and the page title. */
+  label: string;
+  /** One line under the page heading: what this mode measures. */
+  intro: string;
+}
+
+export const STATS_PAGES: Record<GameMode, StatsPageInfo> = {
+  classic: { label: 'Classic', intro: 'Matching with the color on screen.' },
+  memory: { label: 'Memory', intro: 'Matching from memory, after the color was hidden.' },
+};
+
+/** The mode shown at plain /stats. */
+export const DEFAULT_STATS_MODE: GameMode = 'classic';
+
+/** Address of a mode's analysis page (without the ?profile= test query). */
+export function statsPath(mode: GameMode): string {
+  return mode === DEFAULT_STATS_MODE ? '/stats' : `/stats/${mode}`;
+}
+
+/** Which mode a page address is about; null when it is not a known stats page. */
+export function statsModeFromPath(pathname: string): GameMode | null {
+  const m = /^\/stats(?:\/([a-z0-9-]+))?\/?$/.exec(pathname);
+  if (!m) return null;
+  const mode = m[1] ?? DEFAULT_STATS_MODE;
+  return isGameMode(mode) ? mode : null;
+}
+
 /** The hue wheel is split into 12 sectors of 30 degrees (CIE LCH hue angle). */
 export const HUE_BINS = 12;
 /** Fewer picks than this in a sector and we call it "low data". */
