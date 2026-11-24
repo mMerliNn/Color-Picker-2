@@ -433,18 +433,20 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     ctx.font = `700 15px ${FONT}`;
     const roundLabel = `Round ${index + 1}`;
     const rw = ctx.measureText(roundLabel).width;
-    text(roundLabel, tx, top + 17, `700 15px ${FONT}`, C.text);
-    text(` · ${missed ? 'No pick' : matchLabel(r.deltaE as number)}`, tx + rw, top + 17, `400 14px ${FONT}`, C.muted);
-    text(missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`, tx, top + 37, `400 12px ${MONO}`, C.text);
-    const split = bonusText(r, rapid);
-    if (split) {
-      // Three short lines in the same height as the swatches.
-      text(`${r.score} pts`, W - PAD, top + 13, `700 15px ${FONT}`, C.text, 'right');
-      text(split, W - PAD, top + 28, `400 11.5px ${FONT}`, C.muted, 'right');
-      text(detailText(r), W - PAD, top + 43, `400 11.5px ${FONT}`, C.muted, 'right');
+    // Laid out like the sheet. Left: name and verdict, hex codes, then
+    // "ΔE · time" (three lines beside the 44 px swatches; a miss has two).
+    const [titleY, hexY] = missed ? [17, 37] : [13, 29];
+    text(roundLabel, tx, top + titleY, `700 15px ${FONT}`, C.text);
+    text(` · ${missed ? 'No pick' : matchLabel(r.deltaE as number)}`, tx + rw, top + titleY, `400 14px ${FONT}`, C.muted);
+    text(missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`, tx, top + hexY, `400 12px ${MONO}`, C.text);
+    if (!missed) text(detailText(r), tx, top + 44, `400 11.5px ${FONT}`, C.muted);
+    // Right, centred on the row: the points, and in the rapid modes the bonus under them.
+    const bonus = bonusText(r, rapid);
+    if (bonus) {
+      text(`${r.score} pts`, W - PAD, top + 19, `700 15px ${FONT}`, C.text, 'right');
+      text(bonus, W - PAD, top + 36, `400 12px ${FONT}`, C.muted, 'right');
     } else {
-      text(`${r.score} pts`, W - PAD, top + 17, `700 15px ${FONT}`, C.text, 'right');
-      text(detailText(r), W - PAD, top + 37, `400 12px ${FONT}`, C.muted, 'right');
+      text(`${r.score} pts`, W - PAD, top + 27, `700 15px ${FONT}`, C.text, 'right');
     }
     y = top + 44;
 
