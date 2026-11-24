@@ -24,7 +24,10 @@ export interface RoundModel {
   color: string | null; // null once hidden (memory mode, after a reconnect)
   hideAt: number | null; // memory mode: when the color hides
   unlockAt: number | null; // memory mode: when the picker unlocks
-  endsAt: number | null; // null = no time limit (solo "unlimited" mode)
+  startedAt: number; // when the time to pick started (Rapid's bonus counts from here)
+  endsAt: number | null; // null = no time limit (solo "unlimited" mode); Rapid's shot clock can move it
+  /** Rapid: someone locked in first and the shot clock started (once per round). */
+  shot: { by: string; shortened: boolean } | null;
   submitted: number;
   expected: number;
   youPick: string | null;

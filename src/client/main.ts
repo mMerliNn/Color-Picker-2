@@ -60,6 +60,13 @@ setInterval(() => {
   if (conn.isOpen()) sendPing();
 }, 5000);
 
+// Chrome treats a dropdown as keyboard-focused even after a mouse or touch
+// choice, so :focus-visible alone leaves its outline behind. Remember how the
+// player last interacted; the CSS hides dropdown outlines after mouse or touch
+// (keyboard users keep them).
+document.addEventListener('pointerdown', () => (document.documentElement.dataset.input = 'pointer'), true);
+document.addEventListener('keydown', () => (document.documentElement.dataset.input = 'keyboard'), true);
+
 const banner = document.getElementById('banner') as HTMLElement;
 const toast = document.getElementById('toast') as HTMLElement;
 const app = document.getElementById('app') as HTMLElement;
@@ -151,7 +158,9 @@ function handleMessage(msg: ServerMessage): void {
         color: msg.color,
         hideAt: msg.hideAt,
         unlockAt: msg.unlockAt,
+        startedAt: msg.startedAt,
         endsAt: msg.endsAt,
+        shot: null,
         submitted: msg.submitted,
         expected: msg.expected,
         youPick: msg.youPick,
@@ -167,6 +176,13 @@ function handleMessage(msg: ServerMessage): void {
 
     case 'picked':
       if (model.round) model.round.youPick = msg.hex;
+      break;
+
+    case 'shotClock':
+      if (model.round) {
+        model.round.endsAt = msg.endsAt;
+        model.round.shot = { by: msg.by, shortened: msg.shortened };
+      }
       break;
 
     case 'reveal':

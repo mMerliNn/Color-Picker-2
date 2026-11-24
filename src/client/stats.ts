@@ -1,5 +1,6 @@
 import './styles.css';
-import { MODE_OPTIONS } from '../shared/protocol.js';
+import { MAX_ROUND_SCORE, RAPID_MAX_BONUS } from '../shared/colors.js';
+import { MODE_CATEGORIES } from '../shared/protocol.js';
 import {
   DEFAULT_STATS_MODE,
   STATS_PAGES,
@@ -51,18 +52,34 @@ async function api<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** Links to every mode's page, the current one marked. Built from the mode list, so new modes appear by themselves. */
+/**
+ * Links to every mode's page, the current one marked, grouped like the lobby:
+ * "Classic: Standard | Rapid", then "Memory". Built from the mode categories,
+ * so new modes appear by themselves.
+ */
 function modeSwitcher(): HTMLElement {
   return h(
     'nav',
-    { class: 'mode-tabs', 'aria-label': 'Game mode' },
-    ...MODE_OPTIONS.map((m) =>
-      h(
-        'a',
-        { href: `${statsPath(m)}${profileQuery()}`, 'aria-current': m === mode ? 'page' : undefined },
-        STATS_PAGES[m].label,
-      ),
-    ),
+    { class: 'mode-switch', 'aria-label': 'Game mode' },
+    ...MODE_CATEGORIES.map((c) => {
+      const several = c.variants.length > 1;
+      return h(
+        'div',
+        { class: 'mode-group', role: 'group', 'aria-label': c.label },
+        several && h('span', { class: 'mode-group-label', 'aria-hidden': 'true' }, c.label),
+        h(
+          'div',
+          { class: 'mode-tabs' },
+          ...c.variants.map((v) =>
+            h(
+              'a',
+              { href: `${statsPath(v.mode)}${profileQuery()}`, 'aria-current': v.mode === mode ? 'page' : undefined },
+              several ? v.label : c.label,
+            ),
+          ),
+        ),
+      );
+    }),
   );
 }
 
@@ -123,7 +140,7 @@ function render(stats: StatsResponse): void {
       { class: 'tiles' },
       tile('Average color error', t.avgDeltaE === null ? '–' : fmt1(t.avgDeltaE), t.everyoneAvgDeltaE === null ? 'ΔE, lower is better' : `ΔE · everyone: ${fmt1(t.everyoneAvgDeltaE)}`),
       tile('Rounds answered', String(t.answered), t.misses > 0 ? `${t.misses} missed` : 'none missed'),
-      tile('Points per round', t.avgScore === null ? '–' : fmt1(t.avgScore), 'out of 100'),
+      tile('Points per round', t.avgScore === null ? '–' : fmt1(t.avgScore), mode === 'rapid' ? `out of ${MAX_ROUND_SCORE * (1 + RAPID_MAX_BONUS)}, speed bonus included` : `out of ${MAX_ROUND_SCORE}`),
       tile('Best game', t.bestGame ? String(t.bestGame.score) : '–', t.bestGame ? `points in ${t.bestGame.rounds} rounds` : 'needs a 5+ round game'),
     ),
     insightsCard(stats),

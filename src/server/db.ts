@@ -19,9 +19,10 @@ export interface GameRecord {
   seed: number;
   rounds: number;
   roundSeconds: number;
-  /** Classic or memory. Optional for callers (scripts, tests) that only play classic. */
-  mode?: 'classic' | 'memory';
-  memorizeSeconds?: number | null;
+  /** Optional for callers (scripts, tests) that only play classic. */
+  mode?: GameMode;
+  memorizeSeconds?: number | null; // memory mode only
+  shotSeconds?: number | null; // rapid mode only
   playerCount: number;
   startedAt: number;
 }
@@ -62,7 +63,8 @@ export interface GlobalBin {
 }
 
 // 1: games and picks. 2: games.mode and games.memorize_seconds (memory mode).
-const SCHEMA_VERSION = 2;
+// 3: games.shot_seconds (rapid mode).
+const SCHEMA_VERSION = 3;
 
 export class GameStore {
   private readonly db: DatabaseSync;
@@ -79,14 +81,26 @@ export class GameStore {
     const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     if (row.user_version >= SCHEMA_VERSION) return;
     if (row.user_version < 1) this.createV1();
-    // v2: the game mode. Every game logged before it was classic.
-    this.db.exec(`
-      BEGIN;
-      ALTER TABLE games ADD COLUMN mode TEXT NOT NULL DEFAULT 'classic';
-      ALTER TABLE games ADD COLUMN memorize_seconds INTEGER;
-      PRAGMA user_version = 2;
-      COMMIT;
-    `);
+    if (row.user_version < 2) {
+      // v2: the game mode. Every game logged before it was classic.
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE games ADD COLUMN mode TEXT NOT NULL DEFAULT 'classic';
+        ALTER TABLE games ADD COLUMN memorize_seconds INTEGER;
+        PRAGMA user_version = 2;
+        COMMIT;
+      `);
+    }
+    if (row.user_version < 3) {
+      // v3: Rapid's shot clock. (A Rapid pick's speed bonus is its score minus
+      // the accuracy points for its delta_e, so it needs no column of its own.)
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE games ADD COLUMN shot_seconds INTEGER;
+        PRAGMA user_version = 3;
+        COMMIT;
+      `);
+    }
   }
 
   private createV1(): void {
@@ -130,8 +144,8 @@ export class GameStore {
     this.db
       .prepare(
         `INSERT INTO games (id, room_code, seed, rounds, round_seconds, mode, memorize_seconds,
-                            player_count, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            shot_seconds, player_count, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         game.id,
@@ -141,6 +155,7 @@ export class GameStore {
         game.roundSeconds,
         game.mode ?? 'classic',
         game.memorizeSeconds ?? null,
+        game.shotSeconds ?? null,
         game.playerCount,
         game.startedAt,
       );

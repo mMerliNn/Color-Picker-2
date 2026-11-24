@@ -5,6 +5,7 @@ import {
   hueDiff,
   mulberry32,
   scoreFromDeltaE,
+  speedBonus,
   toLch,
 } from '../src/shared/colors.js';
 import { matchLabel } from '../src/shared/labels.js';
@@ -44,6 +45,20 @@ describe('generateColors', () => {
 
   it('supports other round counts', () => {
     expect(generateColors(5, 5)).toHaveLength(5);
+  });
+});
+
+describe('Rapid speed bonus', () => {
+  it('is half the accuracy points at once, shrinking evenly to nothing at the deadline', () => {
+    expect(speedBonus(100, 0, 20_000)).toBe(50);
+    expect(speedBonus(100, 10_000, 20_000)).toBe(25);
+    expect(speedBonus(100, 20_000, 20_000)).toBe(0);
+    expect(speedBonus(100, 25_000, 20_000)).toBe(0); // a late pick in the grace window
+  });
+
+  it('is proportional to accuracy, so a fast careless pick earns little', () => {
+    expect(speedBonus(20, 0, 20_000)).toBe(10);
+    expect(speedBonus(0, 0, 20_000)).toBe(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PickRow } from '../src/server/db.js';
 import { computeStats, type GlobalStats } from '../src/server/stats.js';
-import { MODE_OPTIONS } from '../src/shared/protocol.js';
+import { MODE_CATEGORIES, MODE_OPTIONS, categoryOf } from '../src/shared/protocol.js';
 import {
   DEFAULT_STATS_MODE,
   STATS_PAGES,
@@ -279,7 +279,7 @@ describe('database upgrade', () => {
       `);
       old.close();
       const store = new GameStore(file);
-      expect(store.listGames()[0]).toMatchObject({ id: 'g1', mode: 'classic', memorize_seconds: null });
+      expect(store.listGames()[0]).toMatchObject({ id: 'g1', mode: 'classic', memorize_seconds: null, shot_seconds: null });
       expect(store.picksForClient('cid-old-00000')).toHaveLength(1); // still in the stats
       store.close();
       const again = new GameStore(file); // opening an upgraded file again changes nothing
@@ -310,5 +310,21 @@ describe('one analysis page per game mode', () => {
     for (const path of ['/', '/stats.html', '/statsx', '/stats/blind', '/stats/memory/x', '/api/stats']) {
       expect(statsModeFromPath(path)).toBeNull();
     }
+  });
+});
+
+describe('mode categories (the lobby groups modes)', () => {
+  it('puts every mode in exactly one category', () => {
+    const grouped = MODE_CATEGORIES.flatMap((c) => c.variants.map((v) => v.mode));
+    expect([...grouped].sort()).toEqual([...MODE_OPTIONS].sort());
+    expect(new Set(grouped).size).toBe(grouped.length);
+    for (const mode of MODE_OPTIONS) expect(categoryOf(mode).variants.some((v) => v.mode === mode)).toBe(true);
+  });
+
+  it('has Standard and Rapid under Classic, and Memory on its own', () => {
+    expect(MODE_CATEGORIES.map((c) => [c.label, c.variants.map((v) => v.label)])).toEqual([
+      ['Classic', ['Standard', 'Rapid']],
+      ['Memory', ['Standard']],
+    ]);
   });
 });

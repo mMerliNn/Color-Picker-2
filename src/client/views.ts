@@ -1,15 +1,21 @@
 import 'vanilla-colorful/hex-color-picker.js';
 import { formatClock, formatSeconds, matchLabel } from '../shared/labels.js';
+import { RAPID_MAX_BONUS } from '../shared/colors.js';
 import {
   MAX_NAME_LENGTH,
   MEMORIZE_OPTIONS,
-  MEMORY_STATIC_MS,
-  MODE_OPTIONS,
+  MODE_CATEGORIES,
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
   SECONDS_OPTIONS,
+  SHOT_CLOCK_OPTIONS,
   UNLIMITED_SECONDS,
+  categoryOf,
   type GameMode,
+  type GameSettings,
+  type ModeCategory,
+  type ModeVariant,
+  type PlayerInfo,
   type Standing,
 } from '../shared/protocol.js';
 import type { Ctx, View } from './ctx.js';
@@ -126,29 +132,113 @@ export function homeView(ctx: Ctx): View {
 // Lobby
 // ---------------------------------------------------------------------------
 
-/** A row of radio buttons (one choice), labelled by the element with `labelId`. */
-function segmented<T extends string | number>(
-  labelId: string,
-  options: readonly T[],
-  label: (v: T) => string,
-  onPick: (v: T) => void,
-): { el: HTMLElement; set(value: T, disabled: boolean): void } {
-  const buttons = options.map((v) => {
-    const b = h('button', { type: 'button', role: 'radio', 'aria-checked': 'false' }, label(v));
+/** A variant's own setting, shown inside its button once it is selected ("Rapid · 10 s"). */
+interface VariantSetting {
+  key: 'shotSeconds' | 'memorizeSeconds';
+  label: string; // for screen readers
+  options: readonly number[];
+}
+const VARIANT_SETTINGS: Partial<Record<GameMode, VariantSetting>> = {
+  rapid: { key: 'shotSeconds', label: 'Shot clock', options: SHOT_CLOCK_OPTIONS },
+  memory: { key: 'memorizeSeconds', label: 'Show color for', options: MEMORIZE_OPTIONS },
+};
+
+/** One line under the settings: what the chosen mode is about. Kept to two lines on a phone. */
+function modeHint(s: GameSettings): string {
+  switch (s.mode) {
+    case 'rapid':
+      return `Lock in early for up to +50% points. Once someone locks in, the others get ${s.shotSeconds} s.`;
+    case 'memory':
+      return `The color shows for ${s.memorizeSeconds} s, then hides behind static. Match it from memory.`;
+    default:
+      return 'The color stays on screen while you match it. Points for accuracy only.';
+  }
+}
+
+/**
+ * The lobby's mode choice: a category first (Mode: Classic, Memory), then a
+ * variant inside it (Variant: Standard, Rapid). The Variant row is always there
+ * and a variant's own setting sits inside its button, so switching modes never
+ * adds or removes a row and the lobby never shifts. Everything is built once
+ * and only updated, so a dropdown keeps its focus while the server confirms.
+ */
+function modePicker(ctx: Ctx): { mode: HTMLElement; variant: HTMLElement; set(s: GameSettings, isHost: boolean): void } {
+  // Switching back to a category returns to the variant last chosen in it.
+  const lastVariant = new Map<ModeCategory, GameMode>();
+
+  const catButtons = MODE_CATEGORIES.map((c) => {
+    const b = h('button', { type: 'button', role: 'radio', 'aria-checked': 'false' }, c.label);
     b.addEventListener('click', () => {
-      if (b.getAttribute('aria-checked') !== 'true') onPick(v);
+      if (b.getAttribute('aria-checked') === 'true') return;
+      ctx.actions.setSettings({ mode: lastVariant.get(c) ?? (c.variants[0] as ModeVariant).mode });
     });
     return b;
   });
-  const el = h('div', { class: 'seg', role: 'radiogroup', 'aria-labelledby': labelId }, ...buttons);
-  return {
-    el,
-    set(value, disabled) {
-      options.forEach((v, i) => {
-        const b = buttons[i] as HTMLButtonElement;
-        b.setAttribute('aria-checked', String(v === value));
-        b.disabled = disabled;
+  const mode = h('div', { class: 'seg', role: 'radiogroup', 'aria-labelledby': 'mode-label' }, ...catButtons);
+
+  const groups = MODE_CATEGORIES.map((cat) => {
+    const opts = cat.variants.map((v) => {
+      const btn = h('button', { type: 'button', role: 'radio', 'aria-checked': 'false' }, v.label);
+      btn.addEventListener('click', () => {
+        if (btn.getAttribute('aria-checked') !== 'true') ctx.actions.setSettings({ mode: v.mode });
       });
+      const opt = h('span', { class: 'seg-opt' }, btn);
+      const setting = VARIANT_SETTINGS[v.mode];
+      let extra: { dot: HTMLElement; pick: HTMLElement; select: HTMLSelectElement; value: HTMLElement; setting: VariantSetting } | null = null;
+      if (setting) {
+        // A plain dropdown: phones open their own picker for it (a wheel on iPhone).
+        const select = h(
+          'select',
+          { class: 'seg-select', 'aria-label': setting.label },
+          ...setting.options.map((n) => h('option', { value: n }, `${n} s`)),
+        );
+        select.addEventListener('change', () => ctx.actions.setSettings({ [setting.key]: Number(select.value) }));
+        const dot = h('span', { class: 'seg-dot', 'aria-hidden': 'true' }, '·');
+        const pick = h('span', { class: 'seg-pick' }, select, h('span', { class: 'seg-caret', 'aria-hidden': 'true' }));
+        const value = h('span', { class: 'seg-value' }); // what players other than the host see
+        opt.append(dot, pick, value);
+        extra = { dot, pick, select, value, setting };
+      }
+      return { mode: v.mode, btn, opt, extra };
+    });
+    const el = h('div', { class: 'seg seg-sub', role: 'radiogroup', 'aria-labelledby': 'variant-label' }, ...opts.map((o) => o.opt));
+    return { cat, el, opts };
+  });
+  const variant = h(
+    'div',
+    { class: 'mode-sub' },
+    h('span', { id: 'variant-label', class: 'seg-label sub-label' }, 'Variant'),
+    h('div', null, ...groups.map((g) => g.el)),
+  );
+
+  return {
+    mode,
+    variant,
+    set(s, isHost) {
+      const current = categoryOf(s.mode);
+      lastVariant.set(current, s.mode);
+      catButtons.forEach((b, i) => {
+        b.setAttribute('aria-checked', String(MODE_CATEGORIES[i] === current));
+        b.disabled = !isHost;
+      });
+      for (const g of groups) {
+        g.el.hidden = g.cat !== current;
+        for (const o of g.opts) {
+          const on = o.mode === s.mode;
+          o.btn.setAttribute('aria-checked', String(on));
+          o.btn.disabled = !isHost;
+          o.opt.classList.toggle('on', on);
+          o.opt.classList.toggle('has-setting', on && o.extra !== null);
+          if (!o.extra) continue;
+          const n = s[o.extra.setting.key];
+          o.extra.dot.hidden = !on;
+          o.extra.pick.hidden = !on || !isHost;
+          o.extra.value.hidden = !on || isHost;
+          o.extra.select.value = String(n);
+          setText(o.extra.value, `${n} s`);
+          o.extra.value.setAttribute('aria-label', `${o.extra.setting.label}: ${n} seconds`);
+        }
+      }
     },
   };
 }
@@ -191,21 +281,15 @@ export function lobbyView(ctx: Ctx): View {
   }
   roundsSel.addEventListener('change', () => ctx.actions.setSettings({ rounds: Number(roundsSel.value) }));
   secondsSel.addEventListener('change', () => ctx.actions.setSettings({ roundSeconds: Number(secondsSel.value) }));
-  const modeSeg = segmented<GameMode>('mode-label', MODE_OPTIONS, (m) => (m === 'classic' ? 'Classic' : 'Memory'), (m) =>
-    ctx.actions.setSettings({ mode: m }),
-  );
-  const memoSeg = segmented<number>('memo-label', MEMORIZE_OPTIONS, (n) => `${n} s`, (n) =>
-    ctx.actions.setSettings({ memorizeSeconds: n }),
-  );
-  const memoLabel = h('span', { id: 'memo-label', class: 'seg-label' }, 'Show color for');
-  const modeHint = h('p', { class: 'muted fine mode-hint' });
+  const modes = modePicker(ctx);
+  // Always two lines tall, whatever the mode, so the Start button never moves.
+  const hint = h('p', { class: 'muted fine mode-hint' });
   const settings = h(
     'div',
     { class: 'settings' },
     h('span', { id: 'mode-label', class: 'seg-label' }, 'Mode'),
-    modeSeg.el,
-    memoLabel,
-    memoSeg.el,
+    modes.mode,
+    modes.variant,
     h('label', { for: 'rounds' }, 'Length'),
     roundsSel,
     h('label', { for: 'seconds' }, 'Time per round'),
@@ -232,7 +316,7 @@ export function lobbyView(ctx: Ctx): View {
     count,
     list,
     settings,
-    modeHint,
+    hint,
     unlimitedHint,
     startBtn,
     waiting,
@@ -258,22 +342,15 @@ export function lobbyView(ctx: Ctx): View {
           ),
         );
       }
-      const memory = r.settings.mode === 'memory';
-      modeSeg.set(r.settings.mode, !isHost);
-      memoSeg.set(r.settings.memorizeSeconds, !isHost);
-      memoLabel.hidden = memoSeg.el.hidden = !memory;
-      setText(
-        modeHint,
-        memory
-          ? `Memory: each color shows for ${r.settings.memorizeSeconds} seconds, then disappears behind a moment of static. Match it from memory.`
-          : 'Classic: the color stays on screen while you match it.',
-      );
+      modes.set(r.settings, isHost);
+      setText(hint, modeHint(r.settings));
       roundsSel.value = String(r.settings.rounds);
       secondsSel.value = String(r.settings.roundSeconds);
-      // Unlimited is solo-only: unavailable while anyone else is in the room.
+      // Unlimited is solo-only (unavailable while anyone else is in the room),
+      // and never in Rapid, whose speed bonus needs a deadline.
       const others = r.players.filter((p) => p.connected).length > 1;
       const unlimitedOption = secondsOptions.get(UNLIMITED_SECONDS);
-      if (unlimitedOption) unlimitedOption.disabled = others;
+      if (unlimitedOption) unlimitedOption.disabled = others || r.settings.mode === 'rapid';
       unlimitedHint.hidden = r.settings.roundSeconds !== UNLIMITED_SECONDS;
       roundsSel.disabled = secondsSel.disabled = !isHost;
       startBtn.hidden = !isHost;
@@ -322,6 +399,8 @@ export function playView(ctx: Ctx): View {
   const hideAt = round.hideAt ?? 0;
   const unlockAt = round.unlockAt ?? 0;
   const watchMs = ctx.model.room!.settings.memorizeSeconds * 1000;
+  // Rapid: a speed bonus that shrinks as the round goes on, and a shot clock.
+  const rapid = ctx.model.room!.settings.mode === 'rapid';
   let current = round.youPick ?? NEUTRAL;
   let locked = round.youPick !== null;
   // Only a color the player actually chose is auto-submitted at the deadline.
@@ -401,6 +480,47 @@ export function playView(ctx: Ctx): View {
   const submitBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Lock in');
   const announce = h('p', { class: 'sr-only', role: 'status' });
 
+  // Rapid: the bonus still on offer, in the header. When someone locks in, it
+  // turns amber for a moment and says who; the colors are never covered and
+  // the header never changes height.
+  const chip = rapid ? h('span', { class: 'bonus-chip', title: 'Lock in sooner for more points' }) : null;
+  let lockedPct: number | null = null; // the bonus when you locked in (unknown after a reconnect)
+  let alertUntil = 0;
+  let shotShown = false;
+  const bonusPct = (t: number) =>
+    Math.round(RAPID_MAX_BONUS * 100 * Math.max(0, Math.min(1, 1 - (t - round.startedAt) / totalMs)));
+  const showShot = (shot: { by: string; shortened: boolean }) => {
+    if (!chip) return;
+    const rm = ctx.model.room!;
+    const n = rm.settings.shotSeconds;
+    let parts: (string | { name: string })[];
+    let spoken: string;
+    if (shot.by === rm.youId) {
+      if (!shot.shortened) return; // nobody was hurried
+      const others = rm.players.filter((p) => p.connected && p.id !== rm.youId);
+      const only = others.length === 1 ? (others[0] as PlayerInfo) : null;
+      parts = only ? [{ name: only.name }, ` has ${n} s`] : [`Others have ${n} s`];
+      spoken = only
+        ? `You locked in first. ${only.name} has ${n} seconds left.`
+        : `You locked in first. The others have ${n} seconds left.`;
+    } else {
+      const name = rm.players.find((p) => p.id === shot.by)?.name ?? 'Someone';
+      parts = [{ name }, ' locked in'];
+      spoken = shot.shortened ? `${name} locked in. ${n} seconds left.` : `${name} locked in.`;
+    }
+    // A long name is cut short with "…"; the words after it always stay whole.
+    chip.replaceChildren(
+      ...parts.map((p) =>
+        typeof p === 'string' ? h('span', { class: 'chip-text' }, p) : h('span', { class: 'chip-name', title: p.name }, p.name),
+      ),
+    );
+    chip.classList.remove('done', 'alert');
+    void chip.offsetWidth; // restart the pop animation
+    chip.classList.add('alert');
+    alertUntil = ctx.now() + 3000;
+    setText(announce, spoken);
+  };
+
   // ---- the stage ----
   // Classic: target and your color side by side. Memory: while watching (and
   // during the static) one wide color is laid over the two squares, which stay
@@ -435,7 +555,10 @@ export function playView(ctx: Ctx): View {
   };
   const submit = () => {
     if (locked || !unlocked) return;
-    if (ctx.actions.pick(current)) lock();
+    if (ctx.actions.pick(current)) {
+      if (rapid) lockedPct = bonusPct(ctx.now());
+      lock();
+    }
   };
   submitBtn.addEventListener('click', submit);
 
@@ -446,6 +569,7 @@ export function playView(ctx: Ctx): View {
       'div',
       { class: 'play-head' },
       h('h2', null, `Round ${round.index + 1} of ${round.total}`),
+      chip,
       timeLabel,
     ),
     h('div', { class: 'timer', 'aria-hidden': 'true', hidden: unlimited && !memory }, bar),
@@ -499,6 +623,11 @@ export function playView(ctx: Ctx): View {
       const r = ctx.model.round;
       if (!r) return;
       setText(progress, `${r.submitted} of ${r.expected} locked in`);
+      if (r.shot && !shotShown) {
+        shotShown = true;
+        showShot(r.shot);
+      }
+      el.classList.toggle('shot', r.shot?.shortened === true);
       if (r.youPick && !locked) {
         round.youPick = r.youPick;
         lock();
@@ -507,6 +636,11 @@ export function playView(ctx: Ctx): View {
     },
     tick() {
       const now = ctx.now();
+      if (chip && now >= alertUntil) {
+        chip.classList.remove('alert');
+        chip.classList.toggle('done', locked);
+        setText(chip, locked ? (lockedPct === null ? 'Locked in' : `Locked · +${lockedPct}%`) : `Bonus +${bonusPct(now)}%`);
+      }
       if (memory && now < unlockAt) {
         if (now < hideAt && shown) {
           enter('watch');
@@ -522,7 +656,9 @@ export function playView(ctx: Ctx): View {
         return;
       }
       if (memory) enter('pick');
-      if (round.endsAt === null) {
+      // Read live: Rapid's shot clock can move the deadline mid-round.
+      const endsAt = (ctx.model.round ?? round).endsAt;
+      if (endsAt === null) {
         // No deadline: nothing to count down.
         if (memory) {
           bar.style.transform = 'scaleX(1)';
@@ -530,15 +666,23 @@ export function playView(ctx: Ctx): View {
         }
         return;
       }
-      const remaining = round.endsAt - now;
+      const remaining = endsAt - now;
       // The bar moves by transform (cheap); text and class change only when their value does.
       const fraction = Math.max(0, Math.min(1, remaining / totalMs));
       bar.style.transform = `scaleX(${fraction.toFixed(3)})`;
       setText(timeLabel, formatClock(seconds(remaining)));
       const urgent = remaining < 5000;
       if (urgent !== el.classList.contains('urgent')) el.classList.toggle('urgent', urgent);
-      // Lock in the chosen color just before time runs out.
-      if (!locked && touched && remaining <= 400) submit();
+      // Just before time runs out: lock in the chosen color. In Rapid, only make
+      // sure the server has it: a color used at the buzzer earns no speed bonus,
+      // so it must not turn into a lock-in.
+      if (!locked && touched && remaining <= 400) {
+        if (!rapid) submit();
+        else if (current !== lastDraft) {
+          if (draftTimer) clearTimeout(draftTimer);
+          flushDraft();
+        }
+      }
     },
   };
   view.update?.();
@@ -584,7 +728,17 @@ export function revealView(ctx: Ctx): View {
   const mine = rv.results.find((r) => r.id === youId);
   const isLast = rv.index >= rv.total - 1;
   const memory = room.settings.mode === 'memory';
+  const rapid = room.settings.mode === 'rapid';
   const revealMs = Math.max(1, rv.nextAt - rv.serverNow);
+  const secs = (ms: number | null) => ((ms ?? 0) / 1000).toFixed(1);
+
+  // Rapid: where the points came from.
+  let bonusLine = '';
+  if (rapid) {
+    if (!mine || mine.deltaE === null) bonusLine = 'Lock in a color to score. The sooner, the bigger the bonus.';
+    else if (!mine.lockedIn) bonusLine = `${mine.score} for the color · no speed bonus (time ran out before you locked in)`;
+    else bonusLine = `${mine.score - mine.bonus} for the color + ${mine.bonus} speed bonus (locked in at ${secs(mine.timeMs)} s)`;
+  }
 
   const headline =
     mine && mine.deltaE !== null
@@ -594,7 +748,7 @@ export function revealView(ctx: Ctx): View {
   const countdown = h('p', { class: 'muted center', role: 'status' });
   const timeLabel = h('span', { class: 'time-label', 'aria-hidden': 'true' });
   const bar = h('div', { class: 'timer-fill' });
-  const roundList = h('ol', { class: 'round-results' });
+  const roundList = h('ol', { class: rapid ? 'round-results rapid' : 'round-results' });
   for (const r of rv.results) {
     roundList.append(
       h(
@@ -602,7 +756,16 @@ export function revealView(ctx: Ctx): View {
         { class: r.id === youId ? 'me' : '' },
         swatch(r.pick, `${r.name}'s pick`, 'mini'),
         h('span', { class: 'name' }, r.name),
-        h('span', { class: 'muted' }, r.deltaE === null ? 'missed' : `ΔE ${r.deltaE.toFixed(1)}`),
+        h(
+          'span',
+          { class: 'muted' },
+          r.deltaE === null
+            ? 'missed'
+            : rapid
+              ? `ΔE ${r.deltaE.toFixed(1)} · ${r.lockedIn ? `${secs(r.timeMs)} s` : 'at the buzzer'}`
+              : `ΔE ${r.deltaE.toFixed(1)}`,
+        ),
+        rapid && r.deltaE !== null && h('span', { class: 'split', title: 'Points for the color + speed bonus' }, `${r.score - r.bonus} + ${r.bonus}`),
         h('span', { class: 'num' }, `+${r.score}`),
       ),
     );
@@ -631,6 +794,7 @@ export function revealView(ctx: Ctx): View {
       h('figure', null, swatch(mine?.pick ?? null, 'Your pick', 'target'), h('figcaption', null, 'Your pick')),
     ),
     h('p', { class: 'headline', role: 'status' }, headline),
+    rapid && h('p', { class: 'muted bonus-line' }, bonusLine),
     skipBtn,
     countdown,
     h('h3', null, 'This round'),

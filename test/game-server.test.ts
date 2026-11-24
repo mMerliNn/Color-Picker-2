@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deltaE, round2, scoreFromDeltaE } from '../src/shared/colors.js';
-import { MAX_PLAYERS, type ServerMessage } from '../src/shared/protocol.js';
+import { DEFAULT_SETTINGS, MAX_PLAYERS, type ServerMessage } from '../src/shared/protocol.js';
 import { GameStore } from '../src/server/db.js';
 import { GameServer, type Session } from '../src/server/game-server.js';
 import { DEFAULT_TIMING, type Conn } from '../src/server/room.js';
@@ -807,6 +807,174 @@ describe('memory mode', () => {
     send(ann, { t: 'pick', hex: round(ann).color! });
     expect(store.listGames()[0]).toMatchObject({ mode: 'classic', memorize_seconds: null });
     expect(store.picksForClient(ann.clientId)).toHaveLength(1);
+  });
+});
+
+describe('rapid mode', () => {
+  const round = (c: Client) => c.conn.last('round')!;
+  const youId = (c: Client) => c.conn.last('state')!.youId;
+  const result = (c: Client, name: string) => c.conn.last('reveal')!.results.find((x) => x.name === name)!;
+  const rapidLobby = (names: string[], extra: object = {}) =>
+    lobby(names, { rounds: 5, roundSeconds: 30, mode: 'rapid', shotSeconds: 10, ...extra });
+
+  it('is a host setting with a 5 or 10 second shot clock, 10 by default', () => {
+    const { clients } = lobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    expect(ann.conn.last('state')!.settings.shotSeconds).toBe(10);
+    send(ann, { t: 'settings', settings: { mode: 'rapid', shotSeconds: 5 } });
+    expect(bob.conn.last('state')!.settings).toMatchObject({ mode: 'rapid', shotSeconds: 5 });
+    for (const settings of [{ shotSeconds: 7 }, { shotSeconds: '10' }, { mode: 'turbo' }]) {
+      send(ann, { t: 'settings', settings });
+      expect(ann.conn.last('error')?.code).toBe('bad_message');
+    }
+    expect(ann.conn.last('state')!.settings).toMatchObject({ mode: 'rapid', shotSeconds: 5 });
+  });
+
+  it('always has a time limit: unlimited falls back to the default time', () => {
+    const { clients } = lobby(['Ann'], { roundSeconds: 0 }); // unlimited, solo
+    const [ann] = clients as [Client];
+    send(ann, { t: 'settings', settings: { mode: 'rapid' } });
+    expect(ann.conn.last('state')!.settings).toMatchObject({ mode: 'rapid', roundSeconds: DEFAULT_SETTINGS.roundSeconds });
+    send(ann, { t: 'settings', settings: { roundSeconds: 0 } });
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(DEFAULT_SETTINGS.roundSeconds);
+    const other = lobby(['Cy'], { mode: 'rapid', roundSeconds: 0 }).clients[0]!;
+    expect(other.conn.last('state')!.settings.roundSeconds).toBe(DEFAULT_SETTINGS.roundSeconds);
+  });
+
+  it('sends when the round started, which the bonus counts from', () => {
+    const { clients } = rapidLobby(['Ann']);
+    start(clients[0]!);
+    const r = round(clients[0]!);
+    expect(r.startedAt).toBe(r.serverNow);
+    expect(r.endsAt! - r.startedAt).toBe(30_000);
+  });
+
+  it('adds a speed bonus to a locked-in pick, shrinking towards the deadline', () => {
+    const { clients } = rapidLobby(['Ann']);
+    const [ann] = clients as [Client];
+    start(ann);
+    vi.advanceTimersByTime(6000); // a fifth of the round gone: 40 of the 50 bonus points left
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(result(ann, 'Ann')).toMatchObject({ deltaE: 0, score: 140, bonus: 40, timeMs: 6000, lockedIn: true });
+    expect(ann.conn.last('reveal')!.standings[0]!.total).toBe(140);
+  });
+
+  it('scales the bonus with accuracy, so a careless fast pick earns little', () => {
+    const { clients } = rapidLobby(['Ann']);
+    const [ann] = clients as [Client];
+    start(ann);
+    const target = round(ann).color!;
+    send(ann, { t: 'pick', hex: '#808080' }); // instantly, nowhere near
+    const accuracy = scoreFromDeltaE(round2(deltaE(target, '#808080')));
+    expect(result(ann, 'Ann')).toMatchObject({ bonus: Math.round(accuracy / 2), score: accuracy + Math.round(accuracy / 2) });
+  });
+
+  it('gives no speed bonus to a color used when time ran out', () => {
+    const { clients } = rapidLobby(['Ann']);
+    const [ann] = clients as [Client];
+    start(ann);
+    vi.advanceTimersByTime(5000);
+    send(ann, { t: 'draft', hex: round(ann).color! });
+    vi.advanceTimersByTime(25_000 + GRACE);
+    expect(result(ann, 'Ann')).toMatchObject({ deltaE: 0, score: 100, bonus: 0, lockedIn: false });
+  });
+
+  it('starts the shot clock at the first lock-in: everyone else has 10 s left', () => {
+    const { clients } = rapidLobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(5000);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    for (const c of [ann, bob]) {
+      const shot = c.conn.last('shotClock')!;
+      expect(shot).toMatchObject({ by: youId(ann), shortened: true });
+      expect(shot.endsAt - shot.serverNow).toBe(10_000);
+    }
+    // The round now closes 10 s (plus the usual grace) after Ann locked in.
+    vi.advanceTimersByTime(10_000 + GRACE - 1);
+    expect(bob.conn.last('reveal')).toBeUndefined();
+    vi.advanceTimersByTime(1);
+    expect(result(bob, 'Bob')).toMatchObject({ pick: null, score: 0, lockedIn: false });
+  });
+
+  it('accepts a late pick inside the grace window after the new deadline, then nothing', () => {
+    const { clients } = rapidLobby(['Ann', 'Bob', 'Cy']);
+    const [ann, bob, cy] = clients as [Client, Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(5000);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    vi.advanceTimersByTime(10_000 + 1000); // past the new deadline, inside the grace
+    send(bob, { t: 'pick', hex: round(bob).color! });
+    expect(bob.conn.last('picked')).toBeDefined();
+    vi.advanceTimersByTime(GRACE - 1000);
+    send(cy, { t: 'pick', hex: round(cy).color! });
+    expect(cy.conn.last('error')).toMatchObject({ code: 'wrong_phase', message: 'No round is in progress.' });
+    expect(result(bob, 'Bob')).toMatchObject({ lockedIn: true, timeMs: 16_000, bonus: 23 }); // 100 x 0.5 x (1 - 16/30)
+  });
+
+  it('starts once per round, and again in the next round', () => {
+    const { clients } = rapidLobby(['Ann', 'Bob', 'Cy']);
+    const [ann, bob, cy] = clients as [Client, Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(2000);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    vi.advanceTimersByTime(3000);
+    send(bob, { t: 'pick', hex: round(bob).color! }); // a second lock-in moves nothing
+    expect(cy.conn.all('shotClock')).toHaveLength(1);
+    expect(cy.conn.last('shotClock')!.by).toBe(youId(ann));
+
+    send(cy, { t: 'pick', hex: round(cy).color! }); // everyone in: the round closes
+    vi.advanceTimersByTime(DEFAULT_TIMING.revealMs);
+    expect(round(cy).index).toBe(1);
+    send(bob, { t: 'pick', hex: round(bob).color! });
+    expect(cy.conn.all('shotClock')).toHaveLength(2);
+    expect(cy.conn.last('shotClock')!.by).toBe(youId(bob));
+  });
+
+  it('never gives extra time: with less than the shot clock left, the deadline stays', () => {
+    const { clients } = rapidLobby(['Ann', 'Bob'], { roundSeconds: 15 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    const deadline = round(bob).endsAt!;
+    vi.advanceTimersByTime(8000); // 7 s left
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(bob.conn.last('shotClock')).toMatchObject({ by: youId(ann), shortened: false, endsAt: deadline });
+    vi.advanceTimersByTime(7000 + GRACE);
+    expect(bob.conn.last('reveal')).toBeDefined();
+  });
+
+  it('does not start when nobody else is still choosing', () => {
+    const solo = rapidLobby(['Ann']).clients[0]!;
+    start(solo);
+    send(solo, { t: 'pick', hex: round(solo).color! });
+    expect(solo.conn.all('shotClock')).toHaveLength(0);
+
+    const { clients } = rapidLobby(['Ann', 'Bob']);
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    server.disconnect(bob.session); // gone: nobody to hurry
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(ann.conn.all('shotClock')).toHaveLength(0);
+  });
+
+  it('leaves other modes alone: no bonus, no shot clock', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(bob.conn.all('shotClock')).toHaveLength(0);
+    send(bob, { t: 'pick', hex: round(bob).color! });
+    expect(result(ann, 'Ann')).toMatchObject({ score: 100, bonus: 0, lockedIn: true });
+  });
+
+  it('logs rapid games with their shot clock, and keeps their picks apart from classic', () => {
+    const { clients } = rapidLobby(['Ann']);
+    const [ann] = clients as [Client];
+    start(ann);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(store.listGames()[0]).toMatchObject({ mode: 'rapid', shot_seconds: 10, memorize_seconds: null });
+    expect(store.picksForClient(ann.clientId, 'rapid')).toMatchObject([{ score: 150, delta_e: 0 }]);
+    expect(store.picksForClient(ann.clientId)).toEqual([]); // not in the classic stats
   });
 });
 

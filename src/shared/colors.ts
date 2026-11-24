@@ -80,6 +80,20 @@ export function scoreFromDeltaE(dE: number): number {
   return Math.min(MAX_ROUND_SCORE, Math.max(0, score));
 }
 
+/** Rapid mode: locking in instantly earns this share of the accuracy points on top. */
+export const RAPID_MAX_BONUS = 0.5;
+
+/**
+ * Rapid mode's speed bonus for a locked-in pick: up to half the accuracy points,
+ * shrinking evenly to nothing at the round's original deadline. Proportional to
+ * accuracy, so locking in a careless color fast never pays.
+ */
+export function speedBonus(accuracy: number, timeMs: number, roundMs: number): number {
+  if (roundMs <= 0) return 0;
+  const left = Math.min(1, Math.max(0, 1 - timeMs / roundMs));
+  return Math.round(accuracy * RAPID_MAX_BONUS * left);
+}
+
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

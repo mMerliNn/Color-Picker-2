@@ -9,6 +9,10 @@
   --accent-soft: #e8e7fb;
   --danger: #c2272d;
   --ok: #1a7f4b;
+  /* Rapid's shot clock: the timer bar and the "who locked in" chip. */
+  --amber: #d97706;
+  --amber-bg: #fbbf24;
+  --amber-text: #1f1300;
   /* Swatches sit on neutral mid-gray so the surrounding UI colour does not
      bias how a colour looks (simultaneous contrast). */
   --stage: #808080;
@@ -28,6 +32,9 @@
     --accent-soft: #26244a;
     --danger: #ff7a7f;
     --ok: #4cc38a;
+    --amber: #f59e0b;
+    --amber-bg: #f59e0b;
+    --amber-text: #1a1000;
   }
 }
 
@@ -127,6 +134,12 @@ select {
   min-width: 0;
 }
 input:focus-visible,
+/* Chrome counts a dropdown as keyboard-focused even after a mouse or touch
+   choice; main.ts records how the player last interacted, so the outline only
+   stays for keyboard users. */
+html[data-input='pointer'] select:focus-visible {
+  outline: none;
+}
 select:focus-visible,
 button:focus-visible {
   outline: 3px solid var(--accent);
@@ -270,7 +283,8 @@ button:focus-visible {
 }
 .settings {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* On a narrow phone the controls keep their full width and the labels wrap. */
+  grid-template-columns: auto minmax(max-content, 1fr);
   gap: 8px 14px;
   align-items: center;
   margin-bottom: 8px;
@@ -594,6 +608,23 @@ button:focus-visible {
   margin-bottom: 4px;
 }
 /* One page per game mode: a row of links, styled like the lobby's mode choice. */
+/* Stats page: one link per mode, grouped by category like the lobby. */
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+}
+.mode-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mode-group-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
 .mode-tabs {
   display: inline-flex;
   flex-wrap: wrap;
@@ -601,7 +632,6 @@ button:focus-visible {
   border-radius: 10px;
   padding: 3px;
   gap: 3px;
-  margin: 0 0 12px;
 }
 .mode-tabs a {
   font-size: 0.92rem;
@@ -1281,6 +1311,269 @@ body:has(.review-dialog[open]) {
 }
 .mode-hint {
   margin: 0 0 12px;
+  /* Always two lines, whatever the mode, so the Start button never moves. */
+  min-height: 2.9em;
+  min-height: 2lh;
+}
+
+/* ---- lobby: Mode (category), then Variant inside it ---------------------- */
+
+/* The Variant row belongs to the Mode row above it: smaller, a tinted
+   (not solid) highlight, and an elbow from the Mode row. */
+.mode-sub {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  margin-top: -2px;
+}
+.sub-label {
+  position: relative;
+  padding-left: 18px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.sub-label::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: -12px;
+  width: 8px;
+  height: 20px;
+  border-left: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  border-bottom-left-radius: 5px;
+}
+.seg-sub {
+  align-items: center;
+}
+.seg-opt {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 7px;
+}
+.seg-opt > * {
+  flex-shrink: 0;
+}
+.seg-sub button {
+  font-size: 0.85rem;
+  padding: 5px 10px;
+}
+.seg-sub button[aria-checked='true'] {
+  background: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+.seg-opt.on {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.seg-opt.has-setting button {
+  padding-right: 3px;
+}
+.seg-dot,
+.seg-value {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.seg-dot[hidden],
+.seg-value[hidden],
+.seg-pick[hidden] {
+  display: none;
+}
+.seg-value {
+  padding: 0 10px 0 3px;
+  font-variant-numeric: tabular-nums;
+}
+.seg-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+/* A variant's setting ("10 s"): a plain dropdown dressed as part of the button.
+   Phones open their own picker for it (a wheel on iPhone). */
+.seg-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: auto;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  padding: 5px 19px 5px 3px;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg-select:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.seg-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+/* A drawn chevron like the other dropdowns' (a text "▾" shrinks to a dot in some fonts). */
+.seg-caret {
+  position: absolute;
+  right: 5px;
+  width: 10px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* ---- Rapid round ---------------------------------------------------------- */
+
+.play-head {
+  gap: 10px;
+}
+/* The title and the timer never shrink or move; the chip between them gives
+   way instead (the player's name first, never the words after it). */
+.play-head h2 {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.play-head .time-label {
+  flex-shrink: 0;
+}
+.bonus-chip {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  margin-left: auto;
+  align-self: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bonus-chip.done {
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
+}
+/* Someone locked in: amber for a moment, saying who. */
+.bonus-chip.alert {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+  font-weight: 700;
+  animation: chip-pop 0.25s ease-out;
+}
+.chip-name {
+  flex: 0 1 auto;
+  min-width: 2em;
+  max-width: 6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-text {
+  flex: 0 0 auto;
+  white-space: pre; /* keeps the space in " locked in" */
+}
+@keyframes chip-pop {
+  from {
+    transform: scale(0.85);
+  }
+}
+/* Shot clock running: the bar turns amber (red still wins in the last 5 s). */
+.play.shot:not(.urgent) .timer-fill {
+  background: var(--amber);
+}
+.play.shot .timer-fill {
+  transition: transform 0.35s ease-out;
+}
+
+/* ---- Rapid result --------------------------------------------------------- */
+
+.bonus-line {
+  text-align: center;
+  margin: 0 0 10px;
+}
+.round-results .split {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.round-results.rapid li .muted {
+  flex: 1;
+}
+.round-results.rapid li .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .play-head {
+    gap: 6px;
+  }
+  .bonus-chip {
+    padding: 2px 7px;
+  }
+  /* Two tidy lines per player instead of four cramped columns: name over
+     "ΔE · time" on the left, points over the split on the right. */
+  .round-results.rapid li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'sw name num'
+      'sw det split';
+    column-gap: 10px;
+    row-gap: 0;
+  }
+  .round-results.rapid li > .swatch {
+    grid-area: sw;
+  }
+  .round-results.rapid li > .name {
+    grid-area: name;
+  }
+  .round-results.rapid li > .muted {
+    grid-area: det;
+    font-size: 0.8rem;
+  }
+  .round-results.rapid li > .split {
+    grid-area: split;
+    text-align: right;
+  }
+  .round-results.rapid li > .num {
+    grid-area: num;
+  }
+}
+/* The oldest, narrowest phones (320 px): a touch smaller all round. */
+@media (max-width: 340px) {
+  .play-head h2 {
+    font-size: 1.05rem;
+  }
+  .play-head .time-label {
+    font-size: 1.1rem;
+  }
+  .bonus-chip {
+    font-size: 0.74rem;
+    padding: 2px 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bonus-chip.alert {
+    animation: none;
+  }
+  .play.shot .timer-fill {
+    transition: none;
+  }
 }
 
 /* ---- memory mode round ---------------------------------------------------- */
