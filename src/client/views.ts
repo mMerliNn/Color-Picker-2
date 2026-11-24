@@ -8,9 +8,10 @@ import {
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
   SECONDS_OPTIONS,
-  SHOT_CLOCK_OPTIONS,
   UNLIMITED_SECONDS,
   categoryOf,
+  isMemoryMode,
+  isRapidMode,
   type GameMode,
   type GameSettings,
   type ModeCategory,
@@ -132,24 +133,28 @@ export function homeView(ctx: Ctx): View {
 // Lobby
 // ---------------------------------------------------------------------------
 
-/** A variant's own setting, shown inside its button once it is selected ("Rapid · 10 s"). */
+/** A variant's own setting, shown inside its button once it is selected ("Standard · 3 s"). */
 interface VariantSetting {
-  key: 'shotSeconds' | 'memorizeSeconds';
+  key: 'memorizeSeconds';
   label: string; // for screen readers
   options: readonly number[];
 }
-const VARIANT_SETTINGS: Partial<Record<GameMode, VariantSetting>> = {
-  rapid: { key: 'shotSeconds', label: 'Shot clock', options: SHOT_CLOCK_OPTIONS },
-  memory: { key: 'memorizeSeconds', label: 'Show color for', options: MEMORIZE_OPTIONS },
-};
+const SHOW_TIME: VariantSetting = { key: 'memorizeSeconds', label: 'Show color for', options: MEMORIZE_OPTIONS };
+/** Only the memory modes have one (how long the color shows); the rapid modes need no setting. */
+function variantSetting(mode: GameMode): VariantSetting | null {
+  return isMemoryMode(mode) ? SHOW_TIME : null;
+}
 
-/** One line under the settings: what the chosen mode is about. Kept to two lines on a phone. */
+/** One line under the settings: what the chosen mode is about. At most two lines on a phone. */
 function modeHint(s: GameSettings): string {
   switch (s.mode) {
     case 'rapid':
-      return `Lock in early for up to +50% points. Once someone locks in, the others get ${s.shotSeconds} s.`;
+      return 'Lock in early for up to +50% points. Once someone locks in, the time left is halved.';
     case 'memory':
       return `The color shows for ${s.memorizeSeconds} s, then hides behind static. Match it from memory.`;
+    case 'memory-rapid':
+      // Short enough for two lines even on a 320 px phone.
+      return `Shown for ${s.memorizeSeconds} s. Lock in early for up to +50%; the first lock-in halves the time left.`;
     default:
       return 'The color stays on screen while you match it. Points for accuracy only.';
   }
@@ -183,7 +188,7 @@ function modePicker(ctx: Ctx): { mode: HTMLElement; variant: HTMLElement; set(s:
         if (btn.getAttribute('aria-checked') !== 'true') ctx.actions.setSettings({ mode: v.mode });
       });
       const opt = h('span', { class: 'seg-opt' }, btn);
-      const setting = VARIANT_SETTINGS[v.mode];
+      const setting = variantSetting(v.mode);
       let extra: { dot: HTMLElement; pick: HTMLElement; select: HTMLSelectElement; value: HTMLElement; setting: VariantSetting } | null = null;
       if (setting) {
         // A plain dropdown: phones open their own picker for it (a wheel on iPhone).
@@ -347,10 +352,10 @@ export function lobbyView(ctx: Ctx): View {
       roundsSel.value = String(r.settings.rounds);
       secondsSel.value = String(r.settings.roundSeconds);
       // Unlimited is solo-only (unavailable while anyone else is in the room),
-      // and never in Rapid, whose speed bonus needs a deadline.
+      // and never in the rapid modes, whose speed bonus needs a deadline.
       const others = r.players.filter((p) => p.connected).length > 1;
       const unlimitedOption = secondsOptions.get(UNLIMITED_SECONDS);
-      if (unlimitedOption) unlimitedOption.disabled = others || r.settings.mode === 'rapid';
+      if (unlimitedOption) unlimitedOption.disabled = others || isRapidMode(r.settings.mode);
       unlimitedHint.hidden = r.settings.roundSeconds !== UNLIMITED_SECONDS;
       roundsSel.disabled = secondsSel.disabled = !isHost;
       startBtn.hidden = !isHost;
@@ -399,8 +404,8 @@ export function playView(ctx: Ctx): View {
   const hideAt = round.hideAt ?? 0;
   const unlockAt = round.unlockAt ?? 0;
   const watchMs = ctx.model.room!.settings.memorizeSeconds * 1000;
-  // Rapid: a speed bonus that shrinks as the round goes on, and a shot clock.
-  const rapid = ctx.model.room!.settings.mode === 'rapid';
+  // Rapid modes: a speed bonus that shrinks as the round goes on, and a shot clock.
+  const rapid = isRapidMode(ctx.model.room!.settings.mode);
   let current = round.youPick ?? NEUTRAL;
   let locked = round.youPick !== null;
   // Only a color the player actually chose is auto-submitted at the deadline.
@@ -492,7 +497,8 @@ export function playView(ctx: Ctx): View {
   const showShot = (shot: { by: string; shortened: boolean }) => {
     if (!chip) return;
     const rm = ctx.model.room!;
-    const n = rm.settings.shotSeconds;
+    // Seconds left for the others now (the shot clock halved it, never below 5).
+    const n = seconds(((ctx.model.round ?? round).endsAt ?? ctx.now()) - ctx.now());
     let parts: (string | { name: string })[];
     let spoken: string;
     if (shot.by === rm.youId) {
@@ -727,8 +733,8 @@ export function revealView(ctx: Ctx): View {
   const youId = room.youId;
   const mine = rv.results.find((r) => r.id === youId);
   const isLast = rv.index >= rv.total - 1;
-  const memory = room.settings.mode === 'memory';
-  const rapid = room.settings.mode === 'rapid';
+  const memory = isMemoryMode(room.settings.mode);
+  const rapid = isRapidMode(room.settings.mode);
   const revealMs = Math.max(1, rv.nextAt - rv.serverNow);
   const secs = (ms: number | null) => ((ms ?? 0) / 1000).toFixed(1);
 

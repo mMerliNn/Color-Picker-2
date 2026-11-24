@@ -5,6 +5,9 @@ import {
   MAX_PLAYERS,
   MEMORY_STATIC_MS,
   UNLIMITED_SECONDS,
+  isMemoryMode,
+  isRapidMode,
+  shotClockDeadline,
   type ErrorCode,
   type GameSettings,
   type Phase,
@@ -91,7 +94,7 @@ export class Room {
   /** Memory mode: when the color hides (null in classic). */
   private roundHideAt: number | null = null;
   private roundEndsAt: number | null = null; // null = no time limit
-  /** Rapid: the shot clock has already started this round (it starts once). */
+  /** Rapid modes: the shot clock has already started this round (it starts once). */
   private shotClockStarted = false;
   private startsAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -108,7 +111,7 @@ export class Room {
   ) {
     this.code = code;
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
-    if (this.settings.mode === 'rapid' && this.unlimited) {
+    if (isRapidMode(this.settings.mode) && this.unlimited) {
       this.settings = { ...this.settings, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
     }
   }
@@ -281,8 +284,8 @@ export class Room {
     }
     this.touch();
     this.settings = { ...this.settings, ...patch };
-    // Rapid's speed bonus shrinks towards the deadline, so it needs one.
-    if (this.settings.mode === 'rapid' && this.unlimited) {
+    // The rapid modes' speed bonus shrinks towards the deadline, so they need one.
+    if (isRapidMode(this.settings.mode) && this.unlimited) {
       this.settings = { ...this.settings, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
     }
     this.broadcastState();
@@ -320,8 +323,7 @@ export class Room {
         rounds: this.settings.rounds,
         roundSeconds: this.settings.roundSeconds,
         mode: this.settings.mode,
-        memorizeSeconds: this.settings.mode === 'memory' ? this.settings.memorizeSeconds : null,
-        shotSeconds: this.settings.mode === 'rapid' ? this.settings.shotSeconds : null,
+        memorizeSeconds: isMemoryMode(this.settings.mode) ? this.settings.memorizeSeconds : null,
         playerCount: this.players.size,
         startedAt: Date.now(),
       });
@@ -393,18 +395,19 @@ export class Room {
   }
 
   /**
-   * Rapid: the first lock-in of a round leaves everyone still choosing
-   * `shotSeconds` to finish. Only once per round, only when someone else is
-   * still choosing, and it never gives anyone extra time: when less than that
-   * is left already, the deadline stays (everyone is still told who locked in).
-   * Late picks and drafts get the usual grace after the new deadline.
+   * Rapid modes: the first lock-in of a round halves the time left for everyone
+   * still choosing (never below 5 s, see shotClockDeadline). Only once per
+   * round, only when someone else is still choosing, and it never gives anyone
+   * extra time: when too little is left to cut, the deadline stays (everyone is
+   * still told who locked in). Late picks and drafts get the usual grace after
+   * the new deadline.
    */
   private startShotClock(by: Player, now: number): void {
-    if (this.settings.mode !== 'rapid' || this.shotClockStarted || this.roundEndsAt === null) return;
+    if (!isRapidMode(this.settings.mode) || this.shotClockStarted || this.roundEndsAt === null) return;
     const othersChoosing = [...this.players.values()].some((p) => p !== by && p.conn && !p.pick);
     if (!othersChoosing) return;
     this.shotClockStarted = true;
-    const shotEnd = now + this.settings.shotSeconds * 1000;
+    const shotEnd = shotClockDeadline(now, this.roundEndsAt);
     const shortened = shotEnd < this.roundEndsAt;
     if (shortened) {
       this.roundEndsAt = shotEnd;
@@ -443,7 +446,7 @@ export class Room {
     this.phase = 'picking';
     this.roundIndex = index;
     this.afterReveal = null;
-    if (this.settings.mode === 'memory') {
+    if (isMemoryMode(this.settings.mode)) {
       this.roundHideAt = now + this.settings.memorizeSeconds * 1000;
       this.roundStartedAt = this.roundHideAt + MEMORY_STATIC_MS;
     } else {
@@ -507,7 +510,7 @@ export class Room {
     const records: PickRecord[] = [];
 
     const fullRoundMs = this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
-    const rapid = this.settings.mode === 'rapid';
+    const rapid = isRapidMode(this.settings.mode);
 
     for (const p of this.sortedPlayers()) {
       // Time ran out while the player was still choosing: their last draft counts,
@@ -520,7 +523,7 @@ export class Room {
       if (pick) {
         dE = round2(deltaE(target, pick.hex));
         const accuracy = scoreFromDeltaE(dE);
-        // Rapid: only a color the player actually locked in earns a speed bonus.
+        // Rapid modes: only a color the player actually locked in earns a speed bonus.
         bonus = rapid && p.pick ? speedBonus(accuracy, p.pick.timeMs, fullRoundMs) : 0;
         score = accuracy + bonus;
         timeMs = pick.timeMs;

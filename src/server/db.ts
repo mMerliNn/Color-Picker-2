@@ -21,8 +21,7 @@ export interface GameRecord {
   roundSeconds: number;
   /** Optional for callers (scripts, tests) that only play classic. */
   mode?: GameMode;
-  memorizeSeconds?: number | null; // memory mode only
-  shotSeconds?: number | null; // rapid mode only
+  memorizeSeconds?: number | null; // memory modes only
   playerCount: number;
   startedAt: number;
 }
@@ -63,7 +62,9 @@ export interface GlobalBin {
 }
 
 // 1: games and picks. 2: games.mode and games.memorize_seconds (memory mode).
-// 3: games.shot_seconds (rapid mode).
+// 3: games.shot_seconds, from the first Rapid version (a fixed 5 or 10 s shot
+// clock). Kept so every database has the same shape, but no longer filled:
+// the shot clock now halves the time left, which needs no setting.
 const SCHEMA_VERSION = 3;
 
 export class GameStore {
@@ -92,8 +93,9 @@ export class GameStore {
       `);
     }
     if (row.user_version < 3) {
-      // v3: Rapid's shot clock. (A Rapid pick's speed bonus is its score minus
-      // the accuracy points for its delta_e, so it needs no column of its own.)
+      // v3: the first Rapid version's fixed shot clock (no longer filled). A
+      // rapid pick's speed bonus is its score minus the accuracy points for its
+      // delta_e, so it needs no column of its own.
       this.db.exec(`
         BEGIN;
         ALTER TABLE games ADD COLUMN shot_seconds INTEGER;
@@ -144,8 +146,8 @@ export class GameStore {
     this.db
       .prepare(
         `INSERT INTO games (id, room_code, seed, rounds, round_seconds, mode, memorize_seconds,
-                            shot_seconds, player_count, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            player_count, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         game.id,
@@ -155,7 +157,6 @@ export class GameStore {
         game.roundSeconds,
         game.mode ?? 'classic',
         game.memorizeSeconds ?? null,
-        game.shotSeconds ?? null,
         game.playerCount,
         game.startedAt,
       );

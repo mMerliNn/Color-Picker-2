@@ -2,10 +2,10 @@
 
 Up to 30 players join a room with a 5-letter code and match the **same set of colors**
 (5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**), either with the color
-on screen (**Classic**, or **Rapid**: Classic against the clock, with a speed bonus and a shot clock)
-or from memory (**Memory**). Scores are computed on the server from the CIEDE2000
+on screen (**Classic**) or from memory (**Memory**), each also as **Rapid**: against the clock, with
+a speed bonus and a shot clock. Scores are computed on the server from the CIEDE2000
 color difference, and every pick is stored in SQLite. Each player has a personal
-**history analysis page** for each game mode (`/stats`, `/stats/rapid`, `/stats/memory`): error by hue, lightness/saturation bias, speed vs.
+**history analysis page** for each game mode (`/stats`, `/stats/rapid`, `/stats/memory`, `/stats/memory-rapid`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
 
 - **Client:** TypeScript + Vite, no framework (about 8 kB gzipped for the game, 5 kB more for the stats page), `vanilla-colorful` picker, hand-written SVG charts
@@ -105,42 +105,51 @@ npm run typecheck
    same model as the picker; scoring still uses ΔE.
    The server sends each player only their own rounds (`yourRounds` in the `final` message).
 
-Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time. In
-Rapid a locked-in pick also earns a speed bonus (below).
+Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time. In the
+rapid modes a locked-in pick also earns a speed bonus (below).
 
 **Choosing a mode (lobby):** *Mode* picks a category (Classic, Memory), then *Variant* a mode inside
-it (Classic: Standard or Rapid; Memory: Standard). The categories are `MODE_CATEGORIES` in
-`src/shared/protocol.ts`; each variant is still a mode of its own (`classic`, `rapid`, `memory`)
-with its own scores and stats page. The Variant row is always there and a variant's own setting
-sits inside its selected button ("Rapid · 10 s ⌄", "Standard · 3 s ⌄"), as a plain `<select>` so
-phones open their own picker. Players other than the host see it as text ("Rapid · 10 s"). Nothing
-appears or disappears when the mode changes and the hint under the settings always takes two
-lines, so the lobby never shifts. Switching back to a category returns to the variant last chosen
+it (Standard or Rapid in both). The categories are `MODE_CATEGORIES` in `src/shared/protocol.ts`;
+each variant is still a mode of its own (`classic`, `rapid`, `memory`, `memory-rapid`) with its own
+scores and stats page. What a mode does is described by its features in `MODE_FEATURES`
+(`memory`: the color hides before picking; `rapid`: speed bonus and shot clock), and the code checks
+those features, never mode names, so a new combination is one entry there. The Variant row is
+always there and a variant's own setting sits inside its selected button (the Memory variants' show
+time: "Standard · 3 s ⌄", "Rapid · 3 s ⌄"), as a plain `<select>` so phones open their own picker.
+Players other than the host see it as text ("Rapid · 3 s"). Nothing appears or disappears when the
+mode changes and the hint under the settings always takes two lines, so the lobby never shifts. Switching back to a category returns to the variant last chosen
 in it. Dropdown focus outlines show for keyboard users only: Chrome treats a dropdown as
 keyboard-focused even after a mouse or touch choice, so `main.ts` records how the player last
 interacted (`data-input` on `<html>`) and the CSS hides the outline after a pointer.
 
-**Rapid mode** (Classic · Rapid, shot clock 5 or 10 s, 10 by default):
+**Rapid modes** (Classic · Rapid and Memory · Rapid; nothing extra to set):
 - **Speed bonus:** a locked-in pick earns `round(points × 0.5 × time left / round length)` on
   top (`speedBonus()` in `src/shared/colors.ts`): up to +50% when locking in at once, nothing at
   the deadline. It is proportional to accuracy, so locking in a careless color fast never pays. A
-  color used because time ran out (a draft) keeps its points but earns no bonus, so in Rapid the
-  browser does not auto-lock-in before the deadline; it only makes sure the server has the latest
+  color used because time ran out (a draft) keeps its points but earns no bonus, so in the rapid
+  modes the browser does not auto-lock-in before the deadline; it only makes sure the server has the latest
   draft. The result shows the split ("76 + 34", "ΔE 5.0 · 2.2 s" or "at the buzzer"), and the
   stored `score` includes the bonus.
-- **Shot clock:** the first lock-in of a round leaves everyone still choosing `shotSeconds` to
-  finish (`shotClock` message: who, the new `endsAt`, `shortened`). Once per round, only while
-  someone else is still choosing, and never more time than was left (`shortened: false` then).
-  The 1.5 s grace applies after the new deadline. The bonus still counts against the original
-  round length.
+- **Shot clock:** the first lock-in of a round **halves the time left** for everyone still
+  choosing, but never below 5 seconds, and never adding time (`shotClockDeadline()` in
+  `src/shared/protocol.ts`; `shotClock` message: who, the new `endsAt`, `shortened`). In a
+  20-second round: a lock-in at 2 s leaves 9 s, at 8 s leaves 6 s, at 12 s leaves 5 s, at 16 s
+  changes nothing. It is relative rather than a fixed "10 s left" because people often take more
+  than half the round, and a fixed 10 s would then rarely do anything. Once per round, only while
+  someone else is still choosing. The 1.5 s grace applies after the new deadline. The bonus still
+  counts against the original round length. (The first Rapid version had a fixed 5 or 10 s shot
+  clock setting; it is gone, and an old client sending it is simply ignored.)
 - **On screen:** a chip in the round header shows the bonus on offer ("Bonus +45%", then "Locked ·
   +31%"). When someone locks in, it turns amber for 3 seconds and says who ("Alex locked in", or
-  "Alex has 10 s" / "Others have 10 s" for the one who locked in), and the timer bar turns amber.
+  "Alex has 9 s" / "Others have 9 s" for the one who locked in), and the timer bar turns amber.
   The chip sits between the title and the timer, which never shrink: on a narrow phone the
   player's name is cut short first. Screen readers hear it from a separate live region. The colors
   are never covered.
-- Rapid always has a time limit (the bonus needs a deadline): choosing it with Unlimited set, or
-  Unlimited while in Rapid, falls back to 20 seconds.
+- **Memory · Rapid** is Memory with all of the above. The speed bonus and the shot clock count
+  from the unlock, so watching the color never costs bonus; the chip shows "Bonus +50%" while the
+  color is on screen.
+- The rapid modes always have a time limit (the bonus needs a deadline): choosing one with
+  Unlimited set, or Unlimited while in one, falls back to 20 seconds.
 
 **Memory mode** (lobby: Mode *Memory*; the show time, 2, 3 or 5 seconds, is in its Variant button): each color shows for
 that long ("Watch carefully"), then disappears behind 1 second of gray static, and the picker
@@ -186,10 +195,11 @@ picks(id, game_id, round, client_id, player_name, target_hex, pick_hex, delta_e,
 ```
 
 `*_l/c/h` are CIE LCH values (hue is NULL for near-grays). Missed rounds have `pick_hex = NULL`.
-`mode` is `classic`, `rapid` or `memory` (`memorize_seconds` is set for memory games only,
-`shot_seconds` for rapid games only). `mode` and `memorize_seconds` came in schema version 2,
-`shot_seconds` in version 3; an older database is upgraded on start, and games logged before modes
-existed are marked `classic`. In Rapid, `score` includes the speed bonus; the bonus itself is
+`mode` is `classic`, `rapid`, `memory` or `memory-rapid` (`memorize_seconds` is set for the memory
+modes only). `mode` and `memorize_seconds` came in schema version 2. `shot_seconds` (version 3) is
+from the first Rapid version's fixed shot clock and is no longer filled. An older database is
+upgraded on start, and games logged before modes existed are marked `classic`. In the rapid modes,
+`score` includes the speed bonus; the bonus itself is
 `score` minus the points for `delta_e`. Each game mode has its own analysis page (below), so the
 modes are never mixed.
 Examples for the future analysis page:
@@ -213,16 +223,16 @@ Every player gets a private page about their own play, linked from the home and 
 
 **One page per game mode.** Matching a color on screen and matching it from memory are different
 skills (memory errors are much bigger), so each mode has its own page built from that mode's games
-only, with its own "everyone" comparison: `/stats` for Classic, `/stats/rapid` for Rapid,
-`/stats/memory` for Memory. A switcher at the top of the page, grouped like the lobby ("Classic:
-Standard | Rapid", then "Memory"), moves between them, and the final screen links straight to the page
+only, with its own "everyone" comparison: `/stats` for Classic, `/stats/rapid`, `/stats/memory` and
+`/stats/memory-rapid`. A switcher at the top of the page, grouped like the lobby ("Classic: Standard
+| Rapid", "Memory: Standard | Rapid"), moves between them, and the final screen links straight to the page
 of the mode just played. The API takes the mode in the body (`{ clientId, mode }`; no mode means
 Classic, an unknown one is a 400).
 
-*Adding a game mode later:* add it to `MODE_OPTIONS` and to a category in `MODE_CATEGORIES`
-(both in `src/shared/protocol.ts`; a test checks every mode is in exactly one category), and give it
-a label and a one-line intro in `STATS_PAGES` (`src/shared/stats.ts`). TypeScript will not compile
-until the stats entry is there. The page address (`/stats/<mode>`), the server route, the API, the database
+*Adding a game mode later:* add it to `MODE_OPTIONS`, `MODE_FEATURES` and a category in
+`MODE_CATEGORIES` (all in `src/shared/protocol.ts`; a test checks every mode is in exactly one
+category), and give it a label and a one-line intro in `STATS_PAGES` (`src/shared/stats.ts`).
+TypeScript will not compile until the features and the stats entry are there. The page address (`/stats/<mode>`), the server route, the API, the database
 queries, the per-mode "everyone" cache and the switcher all follow from those two lists, with no
 other changes. If a new mode needs different charts, `src/client/stats.ts` knows which mode it is
 showing (`mode`).
@@ -259,7 +269,7 @@ colormatch-report        # last 7 days
 colormatch-report 30     # last 30 days
 ```
 
-It shows an overview (players, new and active players, games, unlimited-time, rapid and memory games), new players
+It shows an overview (players, new and active players, games, unlimited-time games and games per mode), new players
 in the period, all players (names, games, finished games, rounds, missed rounds, average ΔE,
 points, first/last seen), recent games and activity per day. Times are UTC. A "player" is one
 browser, not a person, and names are whatever people typed. Only the first 6 characters of each

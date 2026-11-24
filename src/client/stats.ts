@@ -1,6 +1,6 @@
 import './styles.css';
 import { MAX_ROUND_SCORE, RAPID_MAX_BONUS } from '../shared/colors.js';
-import { MODE_CATEGORIES } from '../shared/protocol.js';
+import { MODE_CATEGORIES, isRapidMode } from '../shared/protocol.js';
 import {
   DEFAULT_STATS_MODE,
   STATS_PAGES,
@@ -140,7 +140,7 @@ function render(stats: StatsResponse): void {
       { class: 'tiles' },
       tile('Average color error', t.avgDeltaE === null ? '–' : fmt1(t.avgDeltaE), t.everyoneAvgDeltaE === null ? 'ΔE, lower is better' : `ΔE · everyone: ${fmt1(t.everyoneAvgDeltaE)}`),
       tile('Rounds answered', String(t.answered), t.misses > 0 ? `${t.misses} missed` : 'none missed'),
-      tile('Points per round', t.avgScore === null ? '–' : fmt1(t.avgScore), mode === 'rapid' ? `out of ${MAX_ROUND_SCORE * (1 + RAPID_MAX_BONUS)}, speed bonus included` : `out of ${MAX_ROUND_SCORE}`),
+      tile('Points per round', t.avgScore === null ? '–' : fmt1(t.avgScore), isRapidMode(mode) ? `out of ${MAX_ROUND_SCORE * (1 + RAPID_MAX_BONUS)}, speed bonus included` : `out of ${MAX_ROUND_SCORE}`),
       tile('Best game', t.bestGame ? String(t.bestGame.score) : '–', t.bestGame ? `points in ${t.bestGame.rounds} rounds` : 'needs a 5+ round game'),
     ),
     insightsCard(stats),

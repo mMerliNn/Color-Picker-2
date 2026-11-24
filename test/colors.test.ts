@@ -9,6 +9,7 @@ import {
   toLch,
 } from '../src/shared/colors.js';
 import { matchLabel } from '../src/shared/labels.js';
+import { shotClockDeadline } from '../src/shared/protocol.js';
 
 describe('generateColors', () => {
   it('is deterministic for a seed and differs between seeds', () => {
@@ -59,6 +60,15 @@ describe('Rapid speed bonus', () => {
   it('is proportional to accuracy, so a fast careless pick earns little', () => {
     expect(speedBonus(20, 0, 20_000)).toBe(10);
     expect(speedBonus(0, 0, 20_000)).toBe(0);
+  });
+});
+
+describe('Rapid shot clock', () => {
+  it('halves the time left, never below 5 s, and never adds time', () => {
+    expect(shotClockDeadline(0, 20_000)).toBe(10_000);
+    expect(shotClockDeadline(2_000, 20_000)).toBe(11_000); // 18 s left: 9 s
+    expect(shotClockDeadline(12_000, 20_000)).toBe(17_000); // 8 s left: 5 s, not 4
+    expect(shotClockDeadline(16_000, 20_000)).toBe(20_000); // 4 s left: unchanged
   });
 });
 

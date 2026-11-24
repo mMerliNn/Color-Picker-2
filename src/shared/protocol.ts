@@ -14,16 +14,36 @@ export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
 
 /**
  * Classic: the target stays on screen while you match it.
- * Rapid: Classic against the clock. Locking in early earns a speed bonus, and
- * the first lock-in leaves everyone else `shotSeconds` to finish (shot clock).
+ * Rapid: Classic against the clock (see MODE_FEATURES).
  * Memory: the target shows for `memorizeSeconds`, then hides behind a moment of
  * static, and the player matches it from memory.
+ * Memory Rapid: Memory against the clock.
  *
  * Each mode is scored, logged and analysed on its own (its own stats page).
  * In the lobby, modes are grouped into categories (MODE_CATEGORIES below).
  */
-export const MODE_OPTIONS = ['classic', 'rapid', 'memory'] as const;
+export const MODE_OPTIONS = ['classic', 'rapid', 'memory', 'memory-rapid'] as const;
 export type GameMode = (typeof MODE_OPTIONS)[number];
+
+/**
+ * What each mode does, so the code checks features rather than mode names and
+ * a new combination is one entry here.
+ * - memory: the color shows for `memorizeSeconds`, then hides before picking.
+ * - rapid: locking in early earns a speed bonus, and the first lock-in halves
+ *   everyone else's time left (the shot clock, see shotClockDeadline).
+ */
+export interface ModeFeatures {
+  memory: boolean;
+  rapid: boolean;
+}
+export const MODE_FEATURES: Record<GameMode, ModeFeatures> = {
+  classic: { memory: false, rapid: false },
+  rapid: { memory: false, rapid: true },
+  memory: { memory: true, rapid: false },
+  'memory-rapid': { memory: true, rapid: true },
+};
+export const isMemoryMode = (mode: GameMode): boolean => MODE_FEATURES[mode].memory;
+export const isRapidMode = (mode: GameMode): boolean => MODE_FEATURES[mode].rapid;
 
 export interface ModeVariant {
   mode: GameMode;
@@ -49,7 +69,13 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       { mode: 'rapid', label: 'Rapid' },
     ],
   },
-  { label: 'Memory', variants: [{ mode: 'memory', label: 'Standard' }] },
+  {
+    label: 'Memory',
+    variants: [
+      { mode: 'memory', label: 'Standard' },
+      { mode: 'memory-rapid', label: 'Rapid' },
+    ],
+  },
 ];
 
 export function categoryOf(mode: GameMode): ModeCategory {
@@ -63,24 +89,29 @@ export function isGameMode(value: unknown): value is GameMode {
 export const MEMORIZE_OPTIONS = [2, 3, 5] as const;
 /** Memory mode: static between hiding the color and unlocking the picker. */
 export const MEMORY_STATIC_MS = 1000;
-/** Rapid mode: once someone locks in, everyone still choosing has this long left (seconds). */
-export const SHOT_CLOCK_OPTIONS = [5, 10] as const;
+/** Rapid modes: the shot clock never leaves anyone less than this (unless less was left anyway). */
+export const SHOT_CLOCK_MIN_MS = 5000;
+
+/**
+ * Rapid modes' shot clock: when the first player locks in, the time left for
+ * everyone else is cut in half, but never below SHOT_CLOCK_MIN_MS, and never
+ * more than was left. Returns the new deadline (the old one when nothing changes).
+ * Relative rather than a fixed "10 s left", so it bites in any round length,
+ * even when people usually take over half the round to lock in.
+ */
+export function shotClockDeadline(now: number, endsAt: number): number {
+  const left = endsAt - now;
+  return Math.min(endsAt, now + Math.max(SHOT_CLOCK_MIN_MS, Math.round(left / 2)));
+}
 
 export interface GameSettings {
   rounds: number;
-  roundSeconds: number; // never unlimited in Rapid (the speed bonus needs a deadline)
+  roundSeconds: number; // never unlimited in the rapid modes (the speed bonus needs a deadline)
   mode: GameMode;
-  memorizeSeconds: number; // memory mode only
-  shotSeconds: number; // rapid mode only
+  memorizeSeconds: number; // memory modes only
 }
 
-export const DEFAULT_SETTINGS: GameSettings = {
-  rounds: 5,
-  roundSeconds: 20,
-  mode: 'classic',
-  memorizeSeconds: 3,
-  shotSeconds: 10, // the merciful choice
-};
+export const DEFAULT_SETTINGS: GameSettings = { rounds: 5, roundSeconds: 20, mode: 'classic', memorizeSeconds: 3 };
 
 export interface PlayerInfo {
   id: string; // public, per-room id (never the private clientId)
@@ -180,10 +211,10 @@ export type ServerMessage =
       youPick: string | null; // set when re-sent after a reconnect
     }
   | { t: 'progress'; submitted: number; expected: number }
-  // Rapid only, at most once per round: the first player has locked in (`by`,
-  // a player id) while others are still choosing. `endsAt` is the round's
-  // deadline from now on: `shortened` when it moved to `shotSeconds` from now,
-  // unchanged when less than that was left anyway.
+  // Rapid modes only, at most once per round: the first player has locked in
+  // (`by`, a player id) while others are still choosing. `endsAt` is the
+  // round's deadline from now on: `shortened` when the time left was halved
+  // (see shotClockDeadline), unchanged when it was too short to cut.
   | { t: 'shotClock'; serverNow: number; by: string; endsAt: number; shortened: boolean }
   | { t: 'picked'; hex: string } // confirmation of your own pick
   | {
@@ -267,10 +298,6 @@ export function cleanSettings(raw: unknown): Partial<GameSettings> | null {
   if (r.memorizeSeconds !== undefined) {
     if (!MEMORIZE_OPTIONS.includes(r.memorizeSeconds as (typeof MEMORIZE_OPTIONS)[number])) return null;
     out.memorizeSeconds = r.memorizeSeconds as number;
-  }
-  if (r.shotSeconds !== undefined) {
-    if (!SHOT_CLOCK_OPTIONS.includes(r.shotSeconds as (typeof SHOT_CLOCK_OPTIONS)[number])) return null;
-    out.shotSeconds = r.shotSeconds as number;
   }
   return out;
 }

@@ -66,7 +66,8 @@ SELECT COUNT(*) AS games_started,
        COALESCE(SUM(ended_at IS NOT NULL), 0) AS games_finished,
        COALESCE(SUM(round_seconds = 0), 0) AS unlimited_time_games,
        COALESCE(SUM(mode = 'rapid'), 0) AS rapid_games,
-       COALESCE(SUM(mode = 'memory'), 0) AS memory_games
+       COALESCE(SUM(mode = 'memory'), 0) AS memory_games,
+       COALESCE(SUM(mode = 'memory-rapid'), 0) AS memory_rapid_games
 FROM games
 WHERE id IN (SELECT game_id FROM picks WHERE client_id NOT LIKE 'bot-%');"
 
@@ -100,7 +101,7 @@ q "Recent games (up to 15)" "
 SELECT datetime(g.started_at / 1000, 'unixepoch') AS started_utc,
        g.room_code AS room,
        g.rounds,
-       CASE g.mode WHEN 'memory' THEN 'memory ' || g.memorize_seconds || 's' ELSE g.mode END AS mode,
+       CASE WHEN g.mode LIKE 'memory%' THEN g.mode || ' ' || g.memorize_seconds || 's' ELSE g.mode END AS mode,
        CASE g.round_seconds WHEN 0 THEN 'unlimited' ELSE g.round_seconds || 's' END AS time_limit,
        g.player_count AS players,
        CASE WHEN g.ended_at IS NULL THEN 'no' ELSE 'yes' END AS finished,

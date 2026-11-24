@@ -25,8 +25,9 @@ export interface StatsPageInfo {
 
 export const STATS_PAGES: Record<GameMode, StatsPageInfo> = {
   classic: { label: 'Classic', intro: 'Matching with the color on screen.' },
-  rapid: { label: 'Rapid', intro: 'Matching with the color on screen, against the clock.' },
+  rapid: { label: 'Classic · Rapid', intro: 'Matching with the color on screen, against the clock.' },
   memory: { label: 'Memory', intro: 'Matching from memory, after the color was hidden.' },
+  'memory-rapid': { label: 'Memory · Rapid', intro: 'Matching from memory, against the clock.' },
 };
 
 /** The mode shown at plain /stats. */

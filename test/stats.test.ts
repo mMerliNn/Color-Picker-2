@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PickRow } from '../src/server/db.js';
 import { computeStats, type GlobalStats } from '../src/server/stats.js';
-import { MODE_CATEGORIES, MODE_OPTIONS, categoryOf } from '../src/shared/protocol.js';
+import { MODE_CATEGORIES, MODE_FEATURES, MODE_OPTIONS, categoryOf } from '../src/shared/protocol.js';
 import {
   DEFAULT_STATS_MODE,
   STATS_PAGES,
@@ -321,10 +321,19 @@ describe('mode categories (the lobby groups modes)', () => {
     for (const mode of MODE_OPTIONS) expect(categoryOf(mode).variants.some((v) => v.mode === mode)).toBe(true);
   });
 
-  it('has Standard and Rapid under Classic, and Memory on its own', () => {
+  it('has Standard and Rapid under both Classic and Memory', () => {
     expect(MODE_CATEGORIES.map((c) => [c.label, c.variants.map((v) => v.label)])).toEqual([
       ['Classic', ['Standard', 'Rapid']],
-      ['Memory', ['Standard']],
+      ['Memory', ['Standard', 'Rapid']],
     ]);
+  });
+
+  it('describes each mode by its features: the Rapid variants are rapid, the Memory ones memory', () => {
+    for (const c of MODE_CATEGORIES) {
+      for (const v of c.variants) {
+        expect(MODE_FEATURES[v.mode].rapid).toBe(v.label === 'Rapid');
+        expect(MODE_FEATURES[v.mode].memory).toBe(c.label === 'Memory');
+      }
+    }
   });
 });
