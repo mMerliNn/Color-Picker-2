@@ -469,9 +469,27 @@ button:focus-visible {
   padding: 6px 8px;
   border-top: 1px solid var(--border);
 }
+/* The name takes whatever width is left and is cut short with "…" when there
+   is none, so a long name never pushes the table wider than a phone. */
 .table td.name {
   display: table-cell;
-  max-width: 11em;
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Numbers and headings never break ("9.1 s", "Avg time"); only the name gives way. */
+.table th,
+.table td {
+  white-space: nowrap;
+}
+@media (max-width: 420px) {
+  .table th,
+  .table td {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
 }
 .table td.num {
   text-align: right;
@@ -1026,6 +1044,22 @@ a.btn.link {
 .rv-head h2 {
   margin: 0;
 }
+/* With the mode known: a small "Your rounds" over the mode's name. */
+.rv-heading {
+  min-width: 0;
+}
+.rv-kicker {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rv-setup {
+  margin: 2px 0 0;
+  font-size: 0.88rem;
+}
 .rv-close {
   font: inherit;
   font-size: 1.5rem;
@@ -1160,6 +1194,16 @@ a.btn.link {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.rv-list.no-verdict .rv-verdict {
+  display: none;
+}
+.rv-detail {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .rv-hex {
   font: 0.8rem/1.4 ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
   margin-top: 2px;
@@ -1174,6 +1218,9 @@ a.btn.link {
 }
 .rv-score > div:first-child {
   font-size: 0.95rem;
+}
+.rv-score > div {
+  white-space: nowrap;
 }
 .rv-notes {
   grid-column: 1 / -1;

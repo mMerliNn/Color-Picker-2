@@ -242,7 +242,9 @@ describe('a full game', () => {
     expect(final.standings.map((s) => s.rank)).toEqual([1, 1, 3]);
 
     // Each player gets their own rounds for the review, and nobody else's.
-    expect(final.yourRounds).toEqual(targets.map((t) => ({ target: t, pick: t, deltaE: 0, score: 100 })));
+    expect(final.yourRounds).toEqual(
+      targets.map((t) => ({ target: t, pick: t, deltaE: 0, score: 100, timeMs: 0, lockedIn: true, bonus: 0 })),
+    );
     const bobFinal = bob.conn.last('final')!;
     expect(bobFinal.yourRounds.map((r) => r.pick)).toEqual(Array(5).fill('#808080'));
     expect(bobFinal.yourRounds.map((r) => r.target)).toEqual(targets);
@@ -1027,6 +1029,47 @@ describe('memory rapid mode', () => {
     expect(store.listGames()[0]).toMatchObject({ mode: 'memory-rapid', memorize_seconds: 3 });
     expect(store.picksForClient(ann.clientId, 'memory-rapid')).toHaveLength(1);
     expect(store.picksForClient(ann.clientId, 'memory')).toEqual([]);
+  });
+});
+
+describe('pick times in the final results', () => {
+  const round = (c: Client) => c.conn.last('round')!;
+
+  it('sends each player their own times, and an average time per player in the standings', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5, roundSeconds: 20 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    for (let i = 0; i < 5; i++) {
+      const at = 2000 * (i + 1); // Ann locks in after 2, 4, 6, 8 and 10 s
+      vi.advanceTimersByTime(at);
+      send(ann, { t: 'pick', hex: round(ann).color! });
+      if (i === 0) send(bob, { t: 'draft', hex: round(bob).color! }); // round 1: time runs out on Bob's color
+      vi.advanceTimersByTime(20_000 - at + GRACE); // Bob never locks in
+      vi.advanceTimersByTime(DEFAULT_TIMING.revealMs);
+    }
+    const fin = ann.conn.last('final')!;
+    expect(fin.yourRounds.map((r) => r.timeMs)).toEqual([2000, 4000, 6000, 8000, 10_000]);
+    expect(fin.yourRounds.every((r) => r.lockedIn && r.bonus === 0)).toBe(true);
+    const bobRounds = bob.conn.last('final')!.yourRounds;
+    expect(bobRounds[0]).toMatchObject({ pick: expect.any(String), lockedIn: false, timeMs: 20_000, bonus: 0 });
+    expect(bobRounds[1]).toMatchObject({ pick: null, lockedIn: false, timeMs: null, score: 0 });
+    const standing = (name: string) => fin.standings.find((s) => s.name === name)!;
+    expect(standing('Ann').avgTimeMs).toBe(6000);
+    expect(standing('Bob').avgTimeMs).toBeNull(); // never locked in
+  });
+
+  it('includes the speed bonus in rapid rounds', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 20, mode: 'rapid' });
+    const [ann] = clients as [Client];
+    start(ann);
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(4000);
+      send(ann, { t: 'pick', hex: round(ann).color! }); // alone: the round closes at once
+      vi.advanceTimersByTime(DEFAULT_TIMING.revealMs);
+    }
+    const fin = ann.conn.last('final')!;
+    expect(fin.yourRounds[0]).toMatchObject({ timeMs: 4000, lockedIn: true, bonus: 40, score: 140 });
+    expect(fin.standings[0]).toMatchObject({ total: 700, avgTimeMs: 4000 });
   });
 });
 

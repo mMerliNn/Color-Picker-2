@@ -9,7 +9,7 @@ function miss(target: string, dh: number, ds: number, dv: number): string {
 }
 
 function round(target: string, pick: string | null): RoundReview {
-  return { target, pick, deltaE: pick ? 1 : null, score: pick ? 90 : 0 };
+  return { target, pick, deltaE: pick ? 1 : null, score: pick ? 90 : 0, timeMs: pick ? 5000 : null, lockedIn: pick !== null, bonus: 0 };
 }
 
 const byLabel = (target: string, pick: string) => Object.fromEntries(reviewNotes(target, pick).map((n) => [n.label, n]));

@@ -6,23 +6,77 @@
 // The numbers come from src/shared/review.ts; this file only draws them.
 
 import { matchLabel } from '../shared/labels.js';
-import type { RoundReview } from '../shared/protocol.js';
+import { categoryOf, isMemoryMode, isRapidMode, type GameSettings, type RoundReview } from '../shared/protocol.js';
 import { reviewNotes, summaryTip, type ReviewBar, type ReviewNote } from '../shared/review.js';
 import { h } from './dom.js';
+
+/**
+ * A round as the review shows it. Time, lock-in and bonus may be missing (a
+ * server older than this page, mid-deploy); the review then just shows no times.
+ */
+type TimeFields = 'timeMs' | 'lockedIn' | 'bonus';
+export type ReviewRound = Omit<RoundReview, TimeFields> & Partial<Pick<RoundReview, TimeFields>>;
 
 export interface ReviewData {
   player: string;
   total: number;
   avgDeltaE: number | null;
   date: Date;
-  rounds: readonly RoundReview[];
+  rounds: readonly ReviewRound[];
+  /** The game's mode and settings: the title ("Classic · Rapid") and the line under it. */
+  settings?: GameSettings;
 }
 
 const LEGEND = 'Swatch: left = target, right = your pick';
 const dateText = (d: Date) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-const statsText = (d: ReviewData) =>
-  `${d.player} · ${d.total} pts · avg ΔE ${d.avgDeltaE === null ? '–' : d.avgDeltaE.toFixed(1)}`;
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+/** "6.3 s", or "2:14" once a pick took a minute or more (unlimited games). */
+export function pickTime(ms: number): string {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Average time of the rounds with a locked-in pick, or null when there were none (or no times). */
+function avgTimeMs(rounds: readonly ReviewRound[]): number | null {
+  const times = rounds.filter((r) => r.pick !== null && r.lockedIn !== false && typeof r.timeMs === 'number');
+  return times.length ? times.reduce((sum, r) => sum + (r.timeMs as number), 0) / times.length : null;
+}
+
+const statsText = (d: ReviewData) => {
+  const avg = avgTimeMs(d.rounds);
+  return `${d.player} · ${d.total} pts · avg ΔE ${d.avgDeltaE === null ? '–' : d.avgDeltaE.toFixed(1)}${avg === null ? '' : ` · avg ${pickTime(avg)}`}`;
+};
+
+/** "Classic · Rapid": named as in the lobby (category, then variant). */
+export function modeTitle(s: GameSettings): string {
+  const cat = categoryOf(s.mode);
+  const variant = cat.variants.find((v) => v.mode === s.mode);
+  return `${cat.label} · ${variant?.label ?? ''}`;
+}
+
+/** "5 rounds · 20 s per round · color shown 3 s" */
+export function setupText(s: GameSettings): string {
+  const time =
+    s.roundSeconds === 0 ? 'no time limit' : s.roundSeconds >= 60 ? `${s.roundSeconds / 60} min per round` : `${s.roundSeconds} s per round`;
+  return [`${s.rounds} rounds`, time, isMemoryMode(s.mode) ? `color shown ${s.memorizeSeconds} s` : null].filter(Boolean).join(' · ');
+}
+
+/** "ΔE 4.2 · 6.3 s", "ΔE 4.2 · time ran out", or just "ΔE 4.2" without a time. */
+function detailText(r: ReviewRound): string {
+  if (r.pick === null) return '—';
+  const dE = `ΔE ${(r.deltaE as number).toFixed(1)}`;
+  if (r.lockedIn === false) return `${dE} · time ran out`;
+  return typeof r.timeMs === 'number' ? `${dE} · ${pickTime(r.timeMs)}` : dE;
+}
+
+/** Rapid modes: "+31 bonus" (already in the points), or "no bonus" when time ran out. Null elsewhere, and for a miss. */
+function bonusText(r: ReviewRound, rapid: boolean): string | null {
+  if (!rapid || r.pick === null) return null;
+  if (r.lockedIn === false) return 'no bonus';
+  return `+${r.bonus ?? 0} bonus`;
+}
 
 // ---------------------------------------------------------------------------
 // The sheet (HTML)
@@ -64,7 +118,7 @@ function legendEl(): HTMLElement {
   );
 }
 
-function pairEl(r: RoundReview): HTMLElement {
+function pairEl(r: ReviewRound): HTMLElement {
   const label = r.pick ? `Target ${r.target}, your pick ${r.pick}` : `Target ${r.target}, no pick`;
   const left = h('span');
   left.style.backgroundColor = r.target;
@@ -93,9 +147,10 @@ function barEl(n: ReviewNote, pick: string): HTMLElement {
   return el;
 }
 
-function rowEl(r: RoundReview, index: number): HTMLElement {
+function rowEl(r: ReviewRound, index: number, rapid: boolean): HTMLElement {
   const missed = r.pick === null;
   const verdict = missed ? 'No pick' : matchLabel(r.deltaE as number);
+  const bonus = bonusText(r, rapid);
   return h(
     'li',
     { class: `rv-row${missed ? ' missed' : ''}` },
@@ -103,14 +158,16 @@ function rowEl(r: RoundReview, index: number): HTMLElement {
     h(
       'div',
       { class: 'rv-main' },
-      h('div', { class: 'rv-title' }, h('strong', null, `Round ${index + 1}`), h('span', { class: 'muted' }, ` · ${verdict}`)),
+      h('div', { class: 'rv-title' }, h('strong', null, `Round ${index + 1}`), h('span', { class: 'muted rv-verdict' }, ` · ${verdict}`)),
       h('div', { class: 'rv-hex' }, missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`),
+      // ΔE and time under the name, where there is room; the points column stays narrow.
+      !missed && h('div', { class: 'muted rv-detail' }, detailText(r)),
     ),
     h(
       'div',
       { class: 'rv-score' },
       h('div', null, h('span', { class: 'num' }, r.score), ' pts'),
-      h('div', { class: 'muted' }, missed ? '—' : `ΔE ${(r.deltaE as number).toFixed(1)}`),
+      bonus && h('div', { class: 'muted' }, bonus),
     ),
     !missed &&
       h(
@@ -131,14 +188,31 @@ export function reviewSheet(d: ReviewData, onClose: () => void): HTMLElement {
   closeBtn.addEventListener('click', onClose);
   const backBtn = h('button', { class: 'btn link', type: 'button' }, 'Back to results');
   backBtn.addEventListener('click', onClose);
+  const rapid = d.settings ? isRapidMode(d.settings.mode) : false;
+  // With the mode known: "Your rounds" becomes a small heading over the mode's
+  // name, with the game's setup under it.
+  const title = d.settings
+    ? h('div', { class: 'rv-heading' }, h('span', { class: 'rv-kicker' }, 'Your rounds'), h('h2', { id: 'rv-title' }, modeTitle(d.settings)))
+    : h('h2', { id: 'rv-title' }, 'Your rounds');
+  const list = h('ol', { class: 'rv-list' }, ...d.rounds.map((r, i) => rowEl(r, i, rapid)));
+  // On a very narrow phone the verdicts ("· Good") are dropped rather than cut
+  // to "· Go…": all of them, as soon as one does not fit, so the rows stay
+  // alike. ΔE right under it says the same thing more precisely.
+  const fitVerdicts = () => {
+    list.classList.remove('no-verdict');
+    const tooLong = [...list.querySelectorAll<HTMLElement>('.rv-title')].some((t) => t.scrollWidth > t.clientWidth);
+    list.classList.toggle('no-verdict', tooLong);
+  };
+  new ResizeObserver(fitVerdicts).observe(list);
   return h(
     'section',
     { class: 'card review' },
-    h('div', { class: 'rv-head' }, h('h2', { id: 'rv-title' }, 'Your rounds'), closeBtn),
+    h('div', { class: 'rv-head' }, title, closeBtn),
+    d.settings && h('p', { class: 'muted rv-setup' }, setupText(d.settings)),
     metaEl(d),
     tipEl(d),
     legendEl(),
-    h('ol', { class: 'rv-list' }, ...d.rounds.map(rowEl)),
+    list,
     saveBtn,
     backBtn,
   );
@@ -279,11 +353,16 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
   }
   ctx.textBaseline = 'alphabetic';
 
-  // Header
+  // Header: the mode's name, then the game's setup (the image is shared outside
+  // the game, where nobody knows which mode was played).
   text('COLOR MATCH', PAD, y + 11, `700 10.5px ${FONT}`, C.accent);
   y += 14;
-  text(`Round review · ${d.rounds.length} rounds`, PAD, y + 22, `700 21px ${FONT}`, C.text);
+  text(d.settings ? modeTitle(d.settings) : `Round review · ${d.rounds.length} rounds`, PAD, y + 22, `700 21px ${FONT}`, C.text);
   y += 30;
+  if (d.settings) {
+    text(setupText(d.settings), PAD, y + 14, `400 12.5px ${FONT}`, C.muted);
+    y += 19;
+  }
   // Same rule as the sheet: if it does not fit, the whole date goes on its own line.
   ctx.font = `400 12.5px ${FONT}`;
   const oneLine = `${statsText(d)} · ${dateText(d.date)}`;
@@ -333,6 +412,7 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
 
   // Rounds
   const colW = contentW / 3;
+  const rapid = d.settings ? isRapidMode(d.settings.mode) : false;
   d.rounds.forEach((r, index) => {
     if (draw) {
       ctx.fillStyle = C.border;
@@ -356,8 +436,16 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     text(roundLabel, tx, top + 17, `700 15px ${FONT}`, C.text);
     text(` · ${missed ? 'No pick' : matchLabel(r.deltaE as number)}`, tx + rw, top + 17, `400 14px ${FONT}`, C.muted);
     text(missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`, tx, top + 37, `400 12px ${MONO}`, C.text);
-    text(`${r.score} pts`, W - PAD, top + 17, `700 15px ${FONT}`, C.text, 'right');
-    text(missed ? '—' : `ΔE ${(r.deltaE as number).toFixed(1)}`, W - PAD, top + 37, `400 12px ${FONT}`, C.muted, 'right');
+    const split = bonusText(r, rapid);
+    if (split) {
+      // Three short lines in the same height as the swatches.
+      text(`${r.score} pts`, W - PAD, top + 13, `700 15px ${FONT}`, C.text, 'right');
+      text(split, W - PAD, top + 28, `400 11.5px ${FONT}`, C.muted, 'right');
+      text(detailText(r), W - PAD, top + 43, `400 11.5px ${FONT}`, C.muted, 'right');
+    } else {
+      text(`${r.score} pts`, W - PAD, top + 17, `700 15px ${FONT}`, C.text, 'right');
+      text(detailText(r), W - PAD, top + 37, `400 12px ${FONT}`, C.muted, 'right');
+    }
     y = top + 44;
 
     if (!missed) {

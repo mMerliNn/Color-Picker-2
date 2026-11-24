@@ -533,7 +533,7 @@ export class Room {
         p.totalTimeMs += fullRoundMs;
       }
       p.total += score;
-      p.rounds.push({ target, pick: pick?.hex ?? null, deltaE: dE, score });
+      p.rounds.push({ target, pick: pick?.hex ?? null, deltaE: dE, score, timeMs, lockedIn: p.pick !== null, bonus });
       results.push({ id: p.id, name: p.name, pick: pick?.hex ?? null, deltaE: dE, score, bonus, timeMs, lockedIn: p.pick !== null });
       records.push({
         gameId: this.gameId as string,
@@ -616,6 +616,7 @@ export class Room {
         name: p.name,
         total: p.total,
         avgDeltaE: p.deltaEs.length ? round2(p.deltaEs.reduce((a, b) => a + b, 0) / p.deltaEs.length) : null,
+        avgTimeMs: avgLockInMs(p.rounds),
         rank: tied ? (out[i - 1] as Standing).rank : i + 1,
         connected: p.conn !== null,
       });
@@ -731,6 +732,12 @@ export class Room {
       conn?.close();
     }
   }
+}
+
+/** Mean time of the rounds a player locked in (rounded to whole ms), or null when there were none. */
+function avgLockInMs(rounds: readonly RoundReview[]): number | null {
+  const times = rounds.filter((r) => r.lockedIn && r.timeMs !== null).map((r) => r.timeMs as number);
+  return times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null;
 }
 
 export interface ErrorResult {

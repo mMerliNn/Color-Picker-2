@@ -124,6 +124,9 @@ export interface Standing {
   name: string;
   total: number;
   avgDeltaE: number | null; // mean over rounds with a pick
+  // Mean time to lock in, over the rounds the player locked in (misses and
+  // colors used when time ran out left out); null when there were none.
+  avgTimeMs: number | null;
   rank: number;
   connected: boolean;
 }
@@ -146,7 +149,10 @@ export interface RoundReview {
   target: string;
   pick: string | null; // null when the player missed the round
   deltaE: number | null;
-  score: number;
+  score: number; // speed bonus included (rapid modes)
+  timeMs: number | null; // how long the pick took; null when missed
+  lockedIn: boolean; // false when time ran out and the color on screen was used, or missed
+  bonus: number; // rapid modes: the speed bonus part of `score` (0 elsewhere)
 }
 
 // ---- client -> server ----------------------------------------------------

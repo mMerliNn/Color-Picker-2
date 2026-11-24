@@ -87,23 +87,31 @@ npm run typecheck
    round's header, timer bar and color squares in the same place, so the target simply turns into
    the real color next to your pick. Everyone moves on together when the pause ends; a **solo**
    player also gets a **Next round** button to skip the wait (`next` message; the server refuses it,
-   `solo_only`, while anyone else is connected). After the last round: podium and full table. The
-   host can start another game.
+   `solo_only`, while anyone else is connected). After the last round: podium and full table, with
+   each player's **average time** to lock in next to their average ΔE. Total time already broke
+   ties; the column makes that visible. The average counts only rounds the player locked in (a miss
+   or a color used when time ran out would distort it). The host can start another game.
 
    **Quit game:** a quiet link under the countdown, every round and every result, confirmed in a
    dialog ("Keep playing" has focus, so Enter never quits by accident). It sends the existing
    `leave`. The others play on without you; if nobody is left, the server stops the game there
    instead of playing the remaining rounds to an empty room (so they are not logged as misses), and
    the game stays in the log as unfinished.
-5. **Review my rounds** (final screen, or tap a color chip to open it at that round): one row per
-   round with the target beside your pick, points and ΔE, and three mini sliders for **hue,
+5. **Review my rounds** (final screen, or tap a color chip to open it at that round): titled with
+   the game's mode ("Classic · Rapid", named as in the lobby) over a line with its setup ("5 rounds ·
+   20 s per round · color shown 3 s"), so a saved image says which mode it was. Your average time sits
+   next to your points and average ΔE. One row per round with the target beside your pick, the
+   points (in the rapid modes with "+24 bonus" or "no bonus"), ΔE and the time the pick took ("ΔE 6.8 ·
+   6.3 s", or "time ran out"), and three mini sliders for **hue,
    saturation and brightness**. Each slider shows the target as a tick and your pick as a dot on
    top of it, so you can see which way you were off and by how much. All three bars use the same
    100-unit scale (hue shows the target ±50°). A tip at the top sums up the game ("You tend to
    pick colors too muted."), counting a miss under 5 units as good. **Save as image** draws the
    same review into a PNG (the share sheet on phones, a download elsewhere). The bars use HSV, the
    same model as the picker; scoring still uses ΔE.
-   The server sends each player only their own rounds (`yourRounds` in the `final` message).
+   The server sends each player only their own rounds (`yourRounds` in the `final` message, with
+   each round's `timeMs`, `lockedIn` and `bonus`). On a very narrow phone the round verdicts
+   ("· Good") are dropped, all at once, rather than cut short; ΔE right under them says the same.
 
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time. In the
 rapid modes a locked-in pick also earns a speed bonus (below).

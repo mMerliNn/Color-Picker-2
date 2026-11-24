@@ -24,11 +24,11 @@ const MISSES_10: Miss[] = [...MISSES_5, [0, 0, 0.06], null, [-30, 0.05, -0.2], [
 function sampleGame(seed: number, misses: Miss[]): ReviewData {
   const rounds = generateColors(seed, misses.length).map((target, i): RoundReview => {
     const m = misses[i];
-    if (!m) return { target, pick: null, deltaE: null, score: 0 };
+    if (!m) return { target, pick: null, deltaE: null, score: 0, timeMs: null, lockedIn: false, bonus: 0 };
     const t = hexToHsv(target);
     const pick = hsvToHex({ h: (t.h + m[0] + 360) % 360, s: clamp01(t.s + m[1]), v: clamp01(t.v + m[2]) });
     const dE = round2(deltaE(target, pick));
-    return { target, pick, deltaE: dE, score: scoreFromDeltaE(dE) };
+    return { target, pick, deltaE: dE, score: scoreFromDeltaE(dE), timeMs: 4000 + i * 1700, lockedIn: true, bonus: 0 };
   });
   const picked = rounds.filter((r) => r.deltaE !== null);
   return {

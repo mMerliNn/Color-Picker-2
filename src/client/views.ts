@@ -22,7 +22,7 @@ import {
 import type { Ctx, View } from './ctx.js';
 import { clear, h, setText, swatch } from './dom.js';
 import { profileQuery } from './identity.js';
-import { openReview } from './review.js';
+import { openReview, pickTime } from './review.js';
 import { statsPath } from '../shared/stats.js';
 
 const NEUTRAL = '#808080';
@@ -700,14 +700,23 @@ export function playView(ctx: Ctx): View {
 // Round result
 // ---------------------------------------------------------------------------
 
-function standingsTable(rows: Standing[], youId: string, withAvg: boolean): HTMLElement {
+/** `withTime`: the final ranking also shows each player's average time to lock in (it breaks ties). */
+function standingsTable(rows: Standing[], youId: string, withAvg: boolean, withTime = false): HTMLElement {
   const table = h(
     'table',
     { class: 'table' },
     h(
       'thead',
       null,
-      h('tr', null, h('th', null, '#'), h('th', null, 'Player'), withAvg && h('th', { title: 'Average color distance (lower is better)' }, 'Avg ΔE'), h('th', null, 'Points')),
+      h(
+        'tr',
+        null,
+        h('th', null, '#'),
+        h('th', null, 'Player'),
+        withAvg && h('th', { title: 'Average color distance (lower is better)' }, 'Avg ΔE'),
+        withTime && h('th', { title: 'Average time to lock in, over the rounds locked in. Breaks ties.' }, 'Avg time'),
+        h('th', null, 'Points'),
+      ),
     ),
   );
   const body = h('tbody');
@@ -719,6 +728,8 @@ function standingsTable(rows: Standing[], youId: string, withAvg: boolean): HTML
         h('td', null, s.rank),
         h('td', { class: 'name' }, s.name),
         withAvg && h('td', null, s.avgDeltaE === null ? '–' : s.avgDeltaE.toFixed(1)),
+        // `?? null`: a server older than this page sends no time.
+        withTime && h('td', null, (s.avgTimeMs ?? null) === null ? '–' : pickTime(s.avgTimeMs as number)),
         h('td', { class: 'num' }, s.total),
       ),
     );
@@ -894,7 +905,11 @@ export function finalView(ctx: Ctx): View {
   const review =
     me && rounds.length > 0
       ? (startAt?: number) =>
-          openReview({ player: me.name, total: me.total, avgDeltaE: me.avgDeltaE, date: new Date(), rounds }, el, startAt)
+          openReview(
+            { player: me.name, total: me.total, avgDeltaE: me.avgDeltaE, date: new Date(), rounds, settings: room.settings },
+            el,
+            startAt,
+          )
       : null;
 
   const strip = h('div', { class: 'strip' });
@@ -922,7 +937,7 @@ export function finalView(ctx: Ctx): View {
     { class: 'card final' },
     h('h2', null, 'Final results'),
     podium,
-    standingsTable(fin.standings, room.youId, true),
+    standingsTable(fin.standings, room.youId, true, true),
     h('h3', null, 'The colors'),
     strip,
     reviewBtn,

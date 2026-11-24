@@ -210,7 +210,7 @@ function joinAnd(items: string[]): string {
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Null when there is nothing to say (no picks at all). */
-export function summaryTip(rounds: readonly RoundReview[]): string | null {
+export function summaryTip(rounds: readonly Pick<RoundReview, 'target' | 'pick'>[]): string | null {
   const diffs = { h: [] as number[], s: [] as number[], v: [] as number[] };
   for (const r of rounds) {
     if (!r.pick) continue;

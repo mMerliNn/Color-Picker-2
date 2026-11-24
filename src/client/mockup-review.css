@@ -15,6 +15,7 @@
 }
 .mk-toggle {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .mk-toggle .btn[aria-pressed='true'] {
