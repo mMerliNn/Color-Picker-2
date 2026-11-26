@@ -91,17 +91,25 @@ export const MEMORIZE_OPTIONS = [2, 3, 5] as const;
 export const MEMORY_STATIC_MS = 1000;
 /** Rapid modes: the shot clock never leaves anyone less than this (unless less was left anyway). */
 export const SHOT_CLOCK_MIN_MS = 5000;
+/** Rapid modes: the shot clock never leaves anyone more than this. */
+export const SHOT_CLOCK_MAX_MS = 10_000;
 
 /**
  * Rapid modes' shot clock: when the first player locks in, the time left for
- * everyone else is cut in half, but never below SHOT_CLOCK_MIN_MS, and never
- * more than was left. Returns the new deadline (the old one when nothing changes).
- * Relative rather than a fixed "10 s left", so it bites in any round length,
- * even when people usually take over half the round to lock in.
+ * everyone else is cut in half, but to at most SHOT_CLOCK_MAX_MS and at least
+ * SHOT_CLOCK_MIN_MS, and never to more than was left. Returns the new deadline
+ * (the old one when nothing changes).
+ * - Halving makes it bite in short rounds, where people often take over half
+ *   the round (a fixed "10 s left" would rarely do anything in 20 s rounds).
+ * - The 10 s cap makes it bite in long rounds, where halving alone would still
+ *   leave 20 s or more after an early lock-in in a 1-minute round.
+ * It changes gradually with the time left (no jump at 10 s), and the cap only
+ * matters with more than 20 s left, so 15 and 20 s rounds just halve.
  */
 export function shotClockDeadline(now: number, endsAt: number): number {
   const left = endsAt - now;
-  return Math.min(endsAt, now + Math.max(SHOT_CLOCK_MIN_MS, Math.round(left / 2)));
+  const cut = Math.min(SHOT_CLOCK_MAX_MS, Math.max(SHOT_CLOCK_MIN_MS, Math.round(left / 2)));
+  return Math.min(endsAt, now + cut);
 }
 
 export interface GameSettings {

@@ -139,11 +139,14 @@ interacted (`data-input` on `<html>`) and the CSS hides the outline after a poin
   draft. The result shows the split ("76 + 34", "ΔE 5.0 · 2.2 s" or "at the buzzer"), and the
   stored `score` includes the bonus.
 - **Shot clock:** the first lock-in of a round **halves the time left** for everyone still
-  choosing, but never below 5 seconds, and never adding time (`shotClockDeadline()` in
+  choosing, to **at most 10 seconds and at least 5**, never adding time (`shotClockDeadline()` in
   `src/shared/protocol.ts`; `shotClock` message: who, the new `endsAt`, `shortened`). In a
   20-second round: a lock-in at 2 s leaves 9 s, at 8 s leaves 6 s, at 12 s leaves 5 s, at 16 s
-  changes nothing. It is relative rather than a fixed "10 s left" because people often take more
-  than half the round, and a fixed 10 s would then rarely do anything. Once per round, only while
+  changes nothing. In a 1-minute round: a lock-in at 20 s leaves 10 s (halving alone would leave
+  20), at 48 s leaves 6 s. Halving makes it bite in short rounds, where people often take more than
+  half the round (a fixed 10 s would rarely do anything there); the cap makes it bite in long ones.
+  It only matters with more than 20 s left, so 15 and 20 s rounds simply halve, and it changes
+  gradually with the time left, with no jump at 10 s. Once per round, only while
   someone else is still choosing. The 1.5 s grace applies after the new deadline. The bonus still
   counts against the original round length. (The first Rapid version had a fixed 5 or 10 s shot
   clock setting; it is gone, and an old client sending it is simply ignored.)

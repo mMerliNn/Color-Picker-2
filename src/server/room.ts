@@ -396,7 +396,7 @@ export class Room {
 
   /**
    * Rapid modes: the first lock-in of a round halves the time left for everyone
-   * still choosing (never below 5 s, see shotClockDeadline). Only once per
+   * still choosing (at most 10 s, at least 5 s, see shotClockDeadline). Only once per
    * round, only when someone else is still choosing, and it never gives anyone
    * extra time: when too little is left to cut, the deadline stays (everyone is
    * still told who locked in). Late picks and drafts get the usual grace after

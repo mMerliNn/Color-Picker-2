@@ -149,12 +149,12 @@ function variantSetting(mode: GameMode): VariantSetting | null {
 function modeHint(s: GameSettings): string {
   switch (s.mode) {
     case 'rapid':
-      return 'Lock in early for up to +50% points. Once someone locks in, the time left is halved.';
+      return 'Lock in early for up to +50% points. The first lock-in halves the time left (10 s max).';
     case 'memory':
       return `The color shows for ${s.memorizeSeconds} s, then hides behind static. Match it from memory.`;
     case 'memory-rapid':
       // Short enough for two lines even on a 320 px phone.
-      return `Shown for ${s.memorizeSeconds} s. Lock in early for up to +50%; the first lock-in halves the time left.`;
+      return `Shown for ${s.memorizeSeconds} s. Lock in early for up to +50%; the first lock-in halves the time (10 s max).`;
     default:
       return 'The color stays on screen while you match it. Points for accuracy only.';
   }
@@ -497,7 +497,7 @@ export function playView(ctx: Ctx): View {
   const showShot = (shot: { by: string; shortened: boolean }) => {
     if (!chip) return;
     const rm = ctx.model.room!;
-    // Seconds left for the others now (the shot clock halved it, never below 5).
+    // Seconds left for the others now (the shot clock halved it: 5 to 10 s).
     const n = seconds(((ctx.model.round ?? round).endsAt ?? ctx.now()) - ctx.now());
     let parts: (string | { name: string })[];
     let spoken: string;

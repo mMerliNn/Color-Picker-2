@@ -64,11 +64,20 @@ describe('Rapid speed bonus', () => {
 });
 
 describe('Rapid shot clock', () => {
-  it('halves the time left, never below 5 s, and never adds time', () => {
+  it('halves the time left, to at most 10 s and at least 5 s, and never adds time', () => {
     expect(shotClockDeadline(0, 20_000)).toBe(10_000);
     expect(shotClockDeadline(2_000, 20_000)).toBe(11_000); // 18 s left: 9 s
     expect(shotClockDeadline(12_000, 20_000)).toBe(17_000); // 8 s left: 5 s, not 4
     expect(shotClockDeadline(16_000, 20_000)).toBe(20_000); // 4 s left: unchanged
+  });
+
+  it('caps long rounds at 10 s, changing gradually (no jump at the cap)', () => {
+    expect(shotClockDeadline(20_000, 60_000)).toBe(30_000); // 40 s left: 10 s, not 20
+    expect(shotClockDeadline(3_000, 30_000)).toBe(13_000); // 27 s left: 10 s, not 13.5
+    expect(shotClockDeadline(48_000, 60_000)).toBe(54_000); // 12 s left: 6 s
+    const left = (now: number) => shotClockDeadline(now, 60_000) - now;
+    expect(left(39_900)).toBe(10_000);
+    expect(left(40_100)).toBe(9950); // just past the cap: barely less
   });
 });
 

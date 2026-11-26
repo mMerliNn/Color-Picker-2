@@ -881,18 +881,29 @@ describe('rapid mode', () => {
     const { clients } = rapidLobby(['Ann', 'Bob']);
     const [ann, bob] = clients as [Client, Client];
     start(ann);
-    vi.advanceTimersByTime(5000); // 25 s left
+    vi.advanceTimersByTime(14_000); // 16 s left
     send(ann, { t: 'pick', hex: round(ann).color! });
     for (const c of [ann, bob]) {
       const shot = c.conn.last('shotClock')!;
       expect(shot).toMatchObject({ by: youId(ann), shortened: true });
-      expect(shot.endsAt - shot.serverNow).toBe(12_500);
+      expect(shot.endsAt - shot.serverNow).toBe(8000);
     }
-    // The round now closes 12.5 s (plus the usual grace) after Ann locked in.
-    vi.advanceTimersByTime(12_500 + GRACE - 1);
+    // The round now closes 8 s (plus the usual grace) after Ann locked in.
+    vi.advanceTimersByTime(8000 + GRACE - 1);
     expect(bob.conn.last('reveal')).toBeUndefined();
     vi.advanceTimersByTime(1);
     expect(result(bob, 'Bob')).toMatchObject({ pick: null, score: 0, lockedIn: false });
+  });
+
+  it('never leaves more than 10 seconds, however long the round', () => {
+    const { clients } = rapidLobby(['Ann', 'Bob'], { roundSeconds: 60 });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(20_000); // 40 s left: half would still be 20
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    const shot = bob.conn.last('shotClock')!;
+    expect(shot).toMatchObject({ shortened: true });
+    expect(shot.endsAt - shot.serverNow).toBe(10_000);
   });
 
   it('accepts a late pick inside the grace window after the new deadline, then nothing', () => {
@@ -900,14 +911,14 @@ describe('rapid mode', () => {
     const [ann, bob, cy] = clients as [Client, Client, Client];
     start(ann);
     vi.advanceTimersByTime(5000);
-    send(ann, { t: 'pick', hex: round(ann).color! }); // new deadline: 17.5 s into the round
-    vi.advanceTimersByTime(12_500 + 1000); // past the new deadline, inside the grace
+    send(ann, { t: 'pick', hex: round(ann).color! }); // 25 s left, cut to 10: new deadline 15 s into the round
+    vi.advanceTimersByTime(10_000 + 1000); // past the new deadline, inside the grace
     send(bob, { t: 'pick', hex: round(bob).color! });
     expect(bob.conn.last('picked')).toBeDefined();
     vi.advanceTimersByTime(GRACE - 1000);
     send(cy, { t: 'pick', hex: round(cy).color! });
     expect(cy.conn.last('error')).toMatchObject({ code: 'wrong_phase', message: 'No round is in progress.' });
-    expect(result(bob, 'Bob')).toMatchObject({ lockedIn: true, timeMs: 18_500, bonus: 19 }); // 100 x 0.5 x (1 - 18.5/30)
+    expect(result(bob, 'Bob')).toMatchObject({ lockedIn: true, timeMs: 16_000, bonus: 23 }); // 100 x 0.5 x (1 - 16/30)
   });
 
   it('starts once per round, and again in the next round', () => {
