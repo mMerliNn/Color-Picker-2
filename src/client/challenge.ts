@@ -104,7 +104,8 @@ function colorsCard(colors: ColorStat[], gray: boolean): HTMLElement | null {
   };
 
   const rows = colors.map((c) => {
-    // Every row has the same room for the "hardest" / "easiest" tag, so the bars stay comparable.
+    // The bar, the number and the tag each have their own column, so the
+    // numbers line up under their heading and the bars stay comparable.
     const bar = h('span', { class: 'color-bar', 'aria-hidden': 'true' }, h('span'));
     (bar.firstChild as HTMLElement).style.width = `${c.avgError === null ? 0 : Math.round(((c.avgError as number) / max) * 100)}%`;
     const tag = c === hardest ? h('span', { class: 'tag hard' }, 'hardest') : c === easiest ? h('span', { class: 'tag' }, 'easiest') : null;
@@ -113,11 +114,9 @@ function colorsCard(colors: ColorStat[], gray: boolean): HTMLElement | null {
       { class: c === hardest ? 'hardest' : '' },
       h('td', null, c.round + 1),
       h('td', null, pair(c)),
-      h(
-        'td',
-        { class: 'color-avg', title: `${c.answered} answered${c.missed ? `, ${c.missed} missed` : ''}` },
-        h('span', { class: 'color-avg-line' }, bar, h('span', { class: 'num' }, c.avgError === null ? '–' : c.avgError.toFixed(1)), h('span', { class: 'tag-slot' }, tag)),
-      ),
+      h('td', { class: 'color-bar-cell', title: `${c.answered} answered${c.missed ? `, ${c.missed} missed` : ''}` }, bar),
+      h('td', { class: 'num' }, c.avgError === null ? '–' : c.avgError.toFixed(1)),
+      h('td', { class: 'tag-cell' }, tag),
       h('td', { class: 'num' }, c.yourError === null ? (c.yourPick === null ? '–' : '') : c.yourError.toFixed(1)),
     );
   });
@@ -144,8 +143,10 @@ function colorsCard(colors: ColorStat[], gray: boolean): HTMLElement | null {
           null,
           h('th', null, '#'),
           h('th', { title: 'The color, with your pick beside it' }, 'Color · yours'),
-          h('th', { title: 'Everyone’s average error (lower is better)' }, gray ? 'Everyone (avg off)' : 'Everyone (avg ΔE)'),
-          h('th', null, 'You'),
+          h('th', { title: 'Everyone’s average error (lower is better)' }, 'Everyone'),
+          h('th', { class: 'num', title: 'Everyone’s average error (lower is better)' }, gray ? 'Avg off' : 'Avg ΔE'),
+          h('th', { class: 'tag-cell' }),
+          h('th', { class: 'num' }, 'You'),
         ),
       ),
       h('tbody', null, ...rows),

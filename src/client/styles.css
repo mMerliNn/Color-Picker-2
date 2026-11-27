@@ -1987,16 +1987,16 @@ body:has(.review-dialog[open]) {
 .color-pair > span {
   flex: 1;
 }
-.color-avg {
+/* The bar takes the room left over; the numbers line up under their headings. */
+.color-bar-cell {
   width: 100%;
 }
-.color-avg-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.color-stats th.num {
+  text-align: right;
+  font-weight: 600; /* like the other headings (.num alone is bold) */
 }
 .color-bar {
-  flex: 1;
+  display: block;
   min-width: 32px;
   height: 8px;
   border-radius: 4px;
@@ -2013,15 +2013,14 @@ body:has(.review-dialog[open]) {
   background: var(--amber-bg);
   color: var(--amber-text);
 }
-.color-avg-line .num {
-  min-width: 4ch;
-}
-.tag-slot {
-  flex: none;
-  width: 58px;
+/* Same width in every row (even without a tag), so the bars stay comparable. */
+.color-stats .tag-cell {
+  width: 64px;
+  min-width: 64px;
+  padding-left: 0;
 }
 @media (max-width: 420px) {
-  .tag-slot {
+  .color-stats .tag-cell {
     display: none;
   }
 }
