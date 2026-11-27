@@ -1,6 +1,6 @@
 import './styles.css';
 import { MAX_ROUND_SCORE, RAPID_MAX_BONUS } from '../shared/colors.js';
-import { MODE_CATEGORIES, isRapidMode } from '../shared/protocol.js';
+import { MODE_CATEGORIES, isGrayMode, isRapidMode } from '../shared/protocol.js';
 import {
   DEFAULT_STATS_MODE,
   STATS_PAGES,
@@ -33,6 +33,10 @@ const pageMode = statsModeFromPath(location.pathname);
 if (!pageMode) location.replace(`${statsPath(DEFAULT_STATS_MODE)}${profileQuery()}`);
 const mode = pageMode ?? DEFAULT_STATS_MODE;
 const page = STATS_PAGES[mode];
+// Grayscale pages: errors are "off by" on the 0-100 scale, and grays have no
+// hue or saturation, so those charts are left out.
+const gray = isGrayMode(mode);
+const unit = gray ? 'off by' : 'ΔE';
 document.title = `Your color eye · ${page.label} · Color Match`;
 
 // Ordinal ramps (one blue hue, validated for both light and dark surfaces).
@@ -138,13 +142,15 @@ function render(stats: StatsResponse): void {
     h(
       'div',
       { class: 'tiles' },
-      tile('Average color error', t.avgDeltaE === null ? '–' : fmt1(t.avgDeltaE), t.everyoneAvgDeltaE === null ? 'ΔE, lower is better' : `ΔE · everyone: ${fmt1(t.everyoneAvgDeltaE)}`),
+      gray
+        ? tile('Average error', t.avgDeltaE === null ? '–' : fmt1(t.avgDeltaE), t.everyoneAvgDeltaE === null ? 'off by, on 0–100, lower is better' : `off by · everyone: ${fmt1(t.everyoneAvgDeltaE)}`)
+        : tile('Average color error', t.avgDeltaE === null ? '–' : fmt1(t.avgDeltaE), t.everyoneAvgDeltaE === null ? 'ΔE, lower is better' : `ΔE · everyone: ${fmt1(t.everyoneAvgDeltaE)}`),
       tile('Rounds answered', String(t.answered), t.misses > 0 ? `${t.misses} missed` : 'none missed'),
       tile('Points per round', t.avgScore === null ? '–' : fmt1(t.avgScore), isRapidMode(mode) ? `out of ${MAX_ROUND_SCORE * (1 + RAPID_MAX_BONUS)}, speed bonus included` : `out of ${MAX_ROUND_SCORE}`),
       tile('Best game', t.bestGame ? String(t.bestGame.score) : '–', t.bestGame ? `points in ${t.bestGame.rounds} rounds` : 'needs a 5+ round game'),
     ),
     insightsCard(stats),
-    hueCard(stats),
+    ...(gray ? [] : [hueCard(stats)]),
     biasCard(stats),
     bandsCard(stats),
     trendCard(stats),
@@ -152,7 +158,9 @@ function render(stats: StatsResponse): void {
     h(
       'p',
       { class: 'muted fine' },
-      'ΔE is the perceptual distance between two colors (CIEDE2000). About 1 is invisible, 2 is the smallest difference most people notice, 10 is clearly different. Lightness and saturation are measured in CIE LCH.',
+      gray
+        ? 'The scale is CIE lightness (L*): 0 is black, 100 is white, and 50 is the gray that looks halfway. "Off by 5" means your answer was 5 points from the real gray.'
+        : 'ΔE is the perceptual distance between two colors (CIEDE2000). About 1 is invisible, 2 is the smallest difference most people notice, 10 is clearly different. Lightness and saturation are measured in CIE LCH.',
     ),
   );
 }
@@ -222,28 +230,30 @@ function biasCard(stats: StatsResponse): HTMLElement {
       range: 10,
       negWord: 'darker',
       posWord: 'lighter',
-      tip: [b.lightness === null ? 'Not enough data' : `Your picks are on average ${fmt1(Math.abs(b.lightness))} points ${b.lightness >= 0 ? 'lighter' : 'darker'} than the target`],
+      tip: [b.lightness === null ? 'Not enough data' : `Your ${gray ? 'answers' : 'picks'} are on average ${fmt1(Math.abs(b.lightness))} points ${b.lightness >= 0 ? 'lighter' : 'darker'} than the target`],
     },
-    {
+  ];
+  if (!gray) {
+    rows.push({
       label: 'Saturation',
       value: b.chroma,
       range: 10,
       negWord: 'duller',
       posWord: 'more vivid',
       tip: [b.chroma === null ? 'Not enough data' : `Your picks are on average ${fmt1(Math.abs(b.chroma))} points ${b.chroma >= 0 ? 'more vivid' : 'duller'} than the target`],
-    },
-  ];
+    });
+  }
   return card(
     'Do you miss in one direction?',
     'The average signed difference between your pick and the target. A bar near the middle means no systematic lean; a long bar means you could correct it on purpose.',
-    divergingChart(rows, 'Average lightness and saturation bias'),
+    divergingChart(rows, gray ? 'Average lightness bias' : 'Average lightness and saturation bias'),
   );
 }
 
 // ---- where it gets harder ------------------------------------------------------
 
 function bandsCard(stats: StatsResponse): HTMLElement {
-  const all = [...stats.lightness, ...stats.chroma, ...stats.time].map((b) => b.avgDeltaE ?? 0);
+  const all = [...stats.lightness, ...(gray ? [] : stats.chroma), ...stats.time].map((b) => b.avgDeltaE ?? 0);
   const { max, step } = niceAxis(Math.max(...all));
   const group = (title: string, bands: BandStat[], ramp: readonly string[], noun: string): HTMLElement => {
     const rows: BarRow[] = bands.map((b, i) => ({
@@ -251,33 +261,33 @@ function bandsCard(stats: StatsResponse): HTMLElement {
       value: b.avgDeltaE,
       low: b.n > 0 && b.n < stats.minBinPicks,
       color: ramp[i],
-      tip: [b.n === 0 ? 'No picks yet' : `${b.n} pick${b.n === 1 ? '' : 's'}, average error ΔE ${fmt1(b.avgDeltaE as number)}`],
+      tip: [b.n === 0 ? 'No picks yet' : `${b.n} pick${b.n === 1 ? '' : 's'}, average error ${unit} ${fmt1(b.avgDeltaE as number)}`],
     }));
-    return h('div', { class: 'band' }, h('h3', null, title), barChart({ rows, max, step, ariaLabel: `Average color error by ${noun}, in ΔE` }));
+    return h('div', { class: 'band' }, h('h3', null, title), barChart({ rows, max, step, ariaLabel: `Average error by ${noun}, ${gray ? 'off by, on 0 to 100' : 'in ΔE'}` }));
   };
   const tableRows = [
     ...stats.lightness.map((b) => ['Target lightness', b]),
-    ...stats.chroma.map((b) => ['Target saturation', b]),
+    ...(gray ? [] : stats.chroma.map((b) => ['Target saturation', b])),
     ...stats.time.map((b) => ['Time taken', b]),
   ] as [string, BandStat][];
   return card(
     'Where it gets harder',
-    'Same axis in all three charts, so the bars compare directly.',
+    `Same axis in ${gray ? 'both' : 'all three'} charts, so the bars compare directly.`,
     h(
       'div',
       { class: 'bands' },
-      group('Target lightness', stats.lightness, [RAMP3[2], RAMP3[1], RAMP3[0]], 'target lightness'),
-      group('Target saturation', stats.chroma, RAMP3, 'target saturation'),
+      group(gray ? 'How light the gray was' : 'Target lightness', stats.lightness, [RAMP3[2], RAMP3[1], RAMP3[0]], 'target lightness'),
+      !gray && group('Target saturation', stats.chroma, RAMP3, 'target saturation'),
       group('Time taken', stats.time, RAMP4, 'time taken'),
     ),
-    tableView('Show as table', ['Group', 'Band', 'Picks', 'Avg ΔE'], tableRows.map(([g, b]) => [g, b.label, b.n, b.avgDeltaE === null ? '–' : fmt1(b.avgDeltaE)])),
+    tableView('Show as table', ['Group', 'Band', 'Picks', gray ? 'Avg off' : 'Avg ΔE'], tableRows.map(([g, b]) => [g, b.label, b.n, b.avgDeltaE === null ? '–' : fmt1(b.avgDeltaE)])),
   );
 }
 
 // ---- trend ------------------------------------------------------------------
 
 function trendCard(stats: StatsResponse): HTMLElement {
-  const sub = 'Average color error (ΔE) per game, oldest to newest. Lower is better.';
+  const sub = gray ? 'Average error (off by, 0 to 100) per game, oldest to newest. Lower is better.' : 'Average color error (ΔE) per game, oldest to newest. Lower is better.';
   if (stats.trend.length < 2) {
     return card('Progress over time', sub, h('p', { class: 'muted' }, 'Play at least two games to see a trend.'));
   }

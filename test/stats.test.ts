@@ -321,10 +321,11 @@ describe('mode categories (the lobby groups modes)', () => {
     for (const mode of MODE_OPTIONS) expect(categoryOf(mode).variants.some((v) => v.mode === mode)).toBe(true);
   });
 
-  it('has Standard and Rapid under both Classic and Memory', () => {
+  it('has Standard and Rapid under Classic, Memory and Grayscale', () => {
     expect(MODE_CATEGORIES.map((c) => [c.label, c.variants.map((v) => v.label)])).toEqual([
       ['Classic', ['Standard', 'Rapid']],
       ['Memory', ['Standard', 'Rapid']],
+      ['Grayscale', ['Standard', 'Rapid']],
     ]);
   });
 
@@ -333,7 +334,20 @@ describe('mode categories (the lobby groups modes)', () => {
       for (const v of c.variants) {
         expect(MODE_FEATURES[v.mode].rapid).toBe(v.label === 'Rapid');
         expect(MODE_FEATURES[v.mode].memory).toBe(c.label === 'Memory');
+        expect(MODE_FEATURES[v.mode].gray).toBe(c.label === 'Grayscale');
       }
     }
+  });
+});
+
+describe('grayscale stats wording', () => {
+  it('speaks in "off by" on the 0-100 scale, and about grays', () => {
+    const rows = Array.from({ length: 25 }, () =>
+      row({ delta_e: 4, target_h: null, pick_h: null, target_c: 0, pick_c: 0, target_l: 50, pick_l: 45 }),
+    );
+    const s = computeStats(rows, NO_GLOBAL, true);
+    expect(s.insights[0]).toMatch(/^On average you are off by 4\.0 on the 0 to 100 scale/);
+    expect(s.insights.join(' ')).toMatch(/You tend to rate grays darker than they are/);
+    expect(s.insights.join(' ')).not.toMatch(/ΔE/);
   });
 });

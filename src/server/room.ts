@@ -1,10 +1,12 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { deltaE, generateColors, round2, scoreFromDeltaE, speedBonus } from '../shared/colors.js';
+import { deltaE, generateColors, generateGrays, grayError, round2, scoreFromDeltaE, speedBonus } from '../shared/colors.js';
 import {
   DEFAULT_SETTINGS,
   MAX_PLAYERS,
   MEMORY_STATIC_MS,
   UNLIMITED_SECONDS,
+  fitSettings,
+  isGrayMode,
   isMemoryMode,
   isRapidMode,
   shotClockDeadline,
@@ -110,10 +112,7 @@ export class Room {
     private readonly timing: RoomTiming = DEFAULT_TIMING,
   ) {
     this.code = code;
-    this.settings = { ...DEFAULT_SETTINGS, ...settings };
-    if (isRapidMode(this.settings.mode) && this.unlimited) {
-      this.settings = { ...this.settings, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
-    }
+    this.settings = fitSettings({ ...DEFAULT_SETTINGS, ...settings });
   }
 
   // ---- membership ---------------------------------------------------------
@@ -283,11 +282,8 @@ export class Room {
       return err('solo_only', 'Unlimited time is only for solo games. Pick a time limit instead.');
     }
     this.touch();
-    this.settings = { ...this.settings, ...patch };
-    // The rapid modes' speed bonus shrinks towards the deadline, so they need one.
-    if (isRapidMode(this.settings.mode) && this.unlimited) {
-      this.settings = { ...this.settings, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
-    }
+    // Each mode has its own time options, and the rapid modes always a deadline.
+    this.settings = fitSettings({ ...this.settings, ...patch });
     this.broadcastState();
     return null;
   }
@@ -301,7 +297,7 @@ export class Room {
     this.touch();
 
     const seed = randomInt(0, 2 ** 32);
-    this.colors = generateColors(seed, this.settings.rounds);
+    this.colors = (isGrayMode(this.settings.mode) ? generateGrays : generateColors)(seed, this.settings.rounds);
     this.gameId = randomUUID();
     for (const p of this.players.values()) {
       p.total = 0;
@@ -511,6 +507,8 @@ export class Room {
 
     const fullRoundMs = this.unlimited ? MAX_UNLIMITED_TIME_MS : this.settings.roundSeconds * 1000;
     const rapid = isRapidMode(this.settings.mode);
+    // Grayscale modes: the plain difference on the 0-100 scale (see grayError).
+    const error = isGrayMode(this.settings.mode) ? grayError : (a: string, b: string) => round2(deltaE(a, b));
 
     for (const p of this.sortedPlayers()) {
       // Time ran out while the player was still choosing: their last draft counts,
@@ -521,7 +519,7 @@ export class Room {
       let bonus = 0;
       let timeMs: number | null = null;
       if (pick) {
-        dE = round2(deltaE(target, pick.hex));
+        dE = error(target, pick.hex);
         const accuracy = scoreFromDeltaE(dE);
         // Rapid modes: only a color the player actually locked in earns a speed bonus.
         bonus = rapid && p.pick ? speedBonus(accuracy, p.pick.timeMs, fullRoundMs) : 0;

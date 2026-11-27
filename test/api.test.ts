@@ -128,7 +128,7 @@ describe('POST /api/stats', () => {
 
 describe('the stats page and everyone-comparison', () => {
   it('serves stats.html at /stats and at every mode page, and the game for unknown modes', async () => {
-    for (const path of ['/stats', '/stats/', '/stats/classic', '/stats/rapid', '/stats/memory', '/stats/memory/', '/stats/memory-rapid']) {
+    for (const path of ['/stats', '/stats/', '/stats/classic', '/stats/rapid', '/stats/memory', '/stats/memory/', '/stats/memory-rapid', '/stats/grayscale', '/stats/grayscale-rapid']) {
       const res = await fetch(`${base}${path}`);
       expect(res.status, path).toBe(200);
       expect(await res.text()).toContain('stats page');

@@ -1745,3 +1745,132 @@ body:has(.review-dialog[open]) {
   gap: 8px;
   margin-top: 16px;
 }
+
+/* ---- grayscale modes ----------------------------------------------------- */
+
+/* Black and white references with the gray between them, on the neutral stage. */
+.gray-stage {
+  display: grid;
+  grid-template-columns: 1fr 2.2fr 1fr;
+  align-items: end;
+  gap: 14px;
+  background: var(--stage);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.gray-stage figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.gray-stage figcaption {
+  font-size: 0.8rem;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+/* A hairline of dark and light together: visible even when the gray matches the
+   stage, without a solid white or black edge acting as an extra reference. */
+.gray-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgba(255, 255, 255, 0.35);
+}
+.gray-ref {
+  max-width: 64px;
+}
+.gray-target,
+.gray-pair {
+  max-width: 170px;
+}
+/* The result: the real gray and your answer side by side, in the same place. */
+.gray-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+}
+/* The answer: a plain slider, no gradient (that would turn judging into matching). */
+.gray-answer {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.gray-readout {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.gray-readout .num {
+  font-size: 1.8rem;
+  min-width: 3ch;
+}
+.gray-range {
+  width: 100%;
+  height: 44px; /* a large touch target */
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.gray-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-top: -8px;
+}
+.gray-verdict {
+  text-align: center;
+  margin: 0 0 10px;
+}
+/* Review rows: "You said 40 · it was 42" in place of the hex codes. */
+.rv-said {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- lobby on a phone ------------------------------------------------------- */
+
+/* With three Mode categories the buttons no longer fit beside the labels on a
+   phone, so each label sits above its control and the Mode buttons span the
+   full width. */
+@media (max-width: 420px) {
+  .lobby .settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .lobby .settings > label,
+  .lobby .settings > .seg-label {
+    margin-top: 8px;
+  }
+  .lobby .settings > .seg {
+    justify-self: stretch;
+    display: flex;
+  }
+  .lobby .settings > .seg button {
+    flex: 1;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .lobby .settings .mode-sub {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+    margin-top: 4px;
+    padding-left: 18px;
+  }
+  .lobby .settings .mode-sub .sub-label {
+    padding-left: 0;
+  }
+  .lobby .settings .mode-sub .sub-label::before {
+    left: -13px;
+  }
+}

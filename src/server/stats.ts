@@ -12,7 +12,7 @@ import {
   type StatsResponse,
   type Totals,
 } from '../shared/stats.js';
-import type { GameMode } from '../shared/protocol.js';
+import { isGrayMode, type GameMode } from '../shared/protocol.js';
 import type { GameStore, GlobalBin, PickRow } from './db.js';
 
 interface Answered extends PickRow {
@@ -51,7 +51,8 @@ function bands(samples: { value: number; de: number }[], edges: number[], labels
  * Turn a player's raw pick log into the numbers behind the analysis page.
  * Pure function: everything it needs is passed in, so it is easy to test.
  */
-export function computeStats(rows: PickRow[], global: GlobalStats): StatsResponse {
+/** `gray`: a grayscale mode, whose errors are "off by" on a 0-100 scale rather than ΔE. */
+export function computeStats(rows: PickRow[], global: GlobalStats, gray = false): StatsResponse {
   const answered = rows.filter((r): r is Answered => r.pick_hex !== null && r.delta_e !== null);
   const misses = rows.length - answered.length;
   const everyoneOverall =
@@ -164,7 +165,7 @@ export function computeStats(rows: PickRow[], global: GlobalStats): StatsRespons
     time,
     bias,
     trend,
-    insights: buildInsights(totals, hue, bias, timed, trend),
+    insights: buildInsights(totals, hue, bias, timed, trend, gray),
     minBinPicks: MIN_BIN_PICKS,
     minTotalPicks: MIN_TOTAL_PICKS,
   };
@@ -181,7 +182,12 @@ function buildInsights(
   bias: StatsResponse['bias'],
   timed: (Answered & { time_ms: number })[],
   trend: GamePoint[],
+  gray: boolean,
 ): string[] {
+  // The color modes' wording stays as it was; the grayscale modes say "off by"
+  // (on the 0-100 scale) and "answers" instead of "ΔE" and "picks".
+  const unit = gray ? 'off by' : 'ΔE';
+  const picks = gray ? 'answers' : 'picks';
   if (totals.answered < MIN_TOTAL_PICKS) {
     const more = MIN_TOTAL_PICKS - totals.answered;
     return [
@@ -194,7 +200,9 @@ function buildInsights(
   const out: string[] = [];
 
   if (totals.avgDeltaE !== null) {
-    let line = `Your average color error is ΔE ${f1(totals.avgDeltaE)} (lower is better; around 2 is the smallest difference most people can see).`;
+    let line = gray
+      ? `On average you are off by ${f1(totals.avgDeltaE)} on the 0 to 100 scale (lower is better).`
+      : `Your average color error is ΔE ${f1(totals.avgDeltaE)} (lower is better; around 2 is the smallest difference most people can see).`;
     if (totals.everyoneAvgDeltaE !== null) {
       const diff = totals.avgDeltaE - totals.everyoneAvgDeltaE;
       line +=
@@ -225,7 +233,9 @@ function buildInsights(
   // Systematic lightness / chroma bias
   if (bias.lightness !== null && Math.abs(bias.lightness) >= 1.5) {
     out.push(
-      `You tend to pick colors that are ${bias.lightness > 0 ? 'lighter' : 'darker'} than the target (by about ${f1(Math.abs(bias.lightness))} lightness points). Nudge your pick ${bias.lightness > 0 ? 'darker' : 'lighter'} before locking in.`,
+      gray
+        ? `You tend to rate grays ${bias.lightness > 0 ? 'lighter' : 'darker'} than they are (by about ${f1(Math.abs(bias.lightness))}). Nudge your answer ${bias.lightness > 0 ? 'down' : 'up'} before locking in.`
+        : `You tend to pick colors that are ${bias.lightness > 0 ? 'lighter' : 'darker'} than the target (by about ${f1(Math.abs(bias.lightness))} lightness points). Nudge your pick ${bias.lightness > 0 ? 'darker' : 'lighter'} before locking in.`,
     );
   }
   if (bias.chroma !== null && Math.abs(bias.chroma) >= 2) {
@@ -254,9 +264,9 @@ function buildInsights(
     const slow = mean(sorted.slice(sorted.length - half).map((r) => r.delta_e));
     if (fast !== null && slow !== null) {
       if (fast - slow >= 1.5) {
-        out.push(`Taking your time pays off: your slower half of picks averages ΔE ${f1(slow)} versus ${f1(fast)} for the quick half.`);
+        out.push(`Taking your time pays off: your slower half of ${picks} averages ${unit} ${f1(slow)} versus ${f1(fast)} for the quick half.`);
       } else if (slow - fast >= 1.5) {
-        out.push(`Your quick picks are your best (ΔE ${f1(fast)} versus ${f1(slow)} when slower). Trust your first instinct.`);
+        out.push(`Your quick ${picks} are your best (${unit} ${f1(fast)} versus ${f1(slow)} when slower). Trust your first instinct.`);
       }
     }
   }
@@ -266,15 +276,15 @@ function buildInsights(
     const recent = mean(trend.slice(-3).map((g) => g.avgDeltaE)) as number;
     const earlier = mean(trend.slice(-8, -3).map((g) => g.avgDeltaE)) as number;
     if (earlier - recent >= 1) {
-      out.push(`You are improving: your last 3 games averaged ΔE ${f1(recent)} versus ${f1(earlier)} before that.`);
+      out.push(`You are improving: your last 3 games averaged ${unit} ${f1(recent)} versus ${f1(earlier)} before that.`);
     } else if (recent - earlier >= 1) {
-      out.push(`Your last 3 games were a bit worse (ΔE ${f1(recent)}) than the ones before (${f1(earlier)}).`);
+      out.push(`Your last 3 games were a bit worse (${unit} ${f1(recent)}) than the ones before (${f1(earlier)}).`);
     }
   }
 
   // Missed rounds
   if (totals.misses >= 3 && totals.misses / Math.max(1, totals.rounds) >= 0.1) {
-    out.push(`You missed ${totals.misses} rounds without locking in a color. Each one scores zero, so lock in something before time runs out.`);
+    out.push(`You missed ${totals.misses} rounds without ${gray ? 'an answer' : 'locking in a color'}. Each one scores zero, so lock in something before time runs out.`);
   }
 
   return out.slice(0, 7);
@@ -294,7 +304,7 @@ export class StatsService {
 
   /** One player's analysis for one game mode, compared with everyone in that mode. */
   forClient(clientId: string, mode: GameMode = 'classic'): StatsResponse {
-    return computeStats(this.store.picksForClient(clientId, mode), this.global(mode));
+    return computeStats(this.store.picksForClient(clientId, mode), this.global(mode), isGrayMode(mode));
   }
 
   /** Removes the player's history in every mode. */

@@ -6,7 +6,8 @@
 // The numbers come from src/shared/review.ts; this file only draws them.
 
 import { matchLabel } from '../shared/labels.js';
-import { categoryOf, isMemoryMode, isRapidMode, type GameSettings, type RoundReview } from '../shared/protocol.js';
+import { grayValue } from '../shared/colors.js';
+import { categoryOf, isGrayMode, isMemoryMode, isRapidMode, type GameSettings, type RoundReview } from '../shared/protocol.js';
 import { reviewNotes, summaryTip, type ReviewBar, type ReviewNote } from '../shared/review.js';
 import { h } from './dom.js';
 
@@ -46,7 +47,8 @@ function avgTimeMs(rounds: readonly ReviewRound[]): number | null {
 
 const statsText = (d: ReviewData) => {
   const avg = avgTimeMs(d.rounds);
-  return `${d.player} · ${d.total} pts · avg ΔE ${d.avgDeltaE === null ? '–' : d.avgDeltaE.toFixed(1)}${avg === null ? '' : ` · avg ${pickTime(avg)}`}`;
+  const errName = isGrayD(d) ? 'avg off' : 'avg ΔE';
+  return `${d.player} · ${d.total} pts · ${errName} ${d.avgDeltaE === null ? '–' : d.avgDeltaE.toFixed(1)}${avg === null ? '' : ` · avg ${pickTime(avg)}`}`;
 };
 
 /** "Classic · Rapid": named as in the lobby (category, then variant). */
@@ -63,10 +65,36 @@ export function setupText(s: GameSettings): string {
   return [`${s.rounds} rounds`, time, isMemoryMode(s.mode) ? `color shown ${s.memorizeSeconds} s` : null].filter(Boolean).join(' · ');
 }
 
-/** "ΔE 4.2 · 6.3 s", "ΔE 4.2 · time ran out", or just "ΔE 4.2" without a time. */
-function detailText(r: ReviewRound): string {
+/** Grayscale modes: the answer is a number on the 0-100 scale, and the error "off by N". */
+const isGrayD = (d: ReviewData) => (d.settings ? isGrayMode(d.settings.mode) : false);
+
+/**
+ * Grayscale modes: "Real 42 · you 40", in place of the hex codes. Short enough
+ * for a phone, and in the same order as the swatches (real left, yours right).
+ */
+function grayLine(r: ReviewRound): string {
+  return r.pick === null ? `Real ${grayValue(r.target)}` : `Real ${grayValue(r.target)} · you ${grayValue(r.pick)}`;
+}
+
+/** Grayscale modes' tip: a lean to one side, or how close the answers were. */
+function grayTip(rounds: readonly ReviewRound[]): string | null {
+  const diffs = rounds.filter((r) => r.pick !== null).map((r) => grayValue(r.pick as string) - grayValue(r.target));
+  if (diffs.length === 0) return null;
+  const mean = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+  const meanAbs = diffs.reduce((a, b) => a + Math.abs(b), 0) / diffs.length;
+  if (Math.abs(mean) >= 3) {
+    return `You tend to rate grays too ${mean < 0 ? 'dark' : 'light'} (by ${Math.round(Math.abs(mean))} on average). Nudge your answer ${mean < 0 ? 'up' : 'down'}.`;
+  }
+  if (meanAbs <= 3) return 'Spot on: every answer was within a few points of the real gray.';
+  return 'No lean either way: your misses went both darker and lighter.';
+}
+
+const tipText = (d: ReviewData) => (isGrayD(d) ? grayTip(d.rounds) : summaryTip(d.rounds));
+
+/** "ΔE 4.2 · 6.3 s" ("off by 4 · 6.3 s" for grays), "… · time ran out", or no time at all. */
+function detailText(r: ReviewRound, gray = false): string {
   if (r.pick === null) return '—';
-  const dE = `ΔE ${(r.deltaE as number).toFixed(1)}`;
+  const dE = gray ? `off by ${r.deltaE as number}` : `ΔE ${(r.deltaE as number).toFixed(1)}`;
   if (r.lockedIn === false) return `${dE} · time ran out`;
   return typeof r.timeMs === 'number' ? `${dE} · ${pickTime(r.timeMs)}` : dE;
 }
@@ -104,17 +132,18 @@ function metaEl(d: ReviewData): HTMLElement {
 }
 
 function tipEl(d: ReviewData): HTMLElement | null {
-  const tip = summaryTip(d.rounds);
+  const tip = tipText(d);
   if (!tip) return null;
   return h('p', { class: 'rv-tip' }, h('strong', { class: 'rv-tip-label' }, 'Tip'), h('span', null, tip));
 }
 
-function legendEl(): HTMLElement {
+function legendEl(gray: boolean): HTMLElement {
   return h(
     'div',
     { class: 'rv-legend muted' },
     h('span', null, LEGEND),
-    h('span', { class: 'rv-key' }, 'Bars:', h('i', { class: 'k-tick' }), 'target', h('i', { class: 'k-dot' }), 'your pick'),
+    // Grays have no hue or saturation, so the grayscale modes show no bars.
+    !gray && h('span', { class: 'rv-key' }, 'Bars:', h('i', { class: 'k-tick' }), 'target', h('i', { class: 'k-dot' }), 'your pick'),
   );
 }
 
@@ -147,7 +176,7 @@ function barEl(n: ReviewNote, pick: string): HTMLElement {
   return el;
 }
 
-function rowEl(r: ReviewRound, index: number, rapid: boolean): HTMLElement {
+function rowEl(r: ReviewRound, index: number, rapid: boolean, gray: boolean): HTMLElement {
   const missed = r.pick === null;
   const verdict = missed ? 'No pick' : matchLabel(r.deltaE as number);
   const bonus = bonusText(r, rapid);
@@ -159,9 +188,9 @@ function rowEl(r: ReviewRound, index: number, rapid: boolean): HTMLElement {
       'div',
       { class: 'rv-main' },
       h('div', { class: 'rv-title' }, h('strong', null, `Round ${index + 1}`), h('span', { class: 'muted rv-verdict' }, ` · ${verdict}`)),
-      h('div', { class: 'rv-hex' }, missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`),
+      gray ? h('div', { class: 'rv-said' }, grayLine(r)) : h('div', { class: 'rv-hex' }, missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`),
       // ΔE and time under the name, where there is room; the points column stays narrow.
-      !missed && h('div', { class: 'muted rv-detail' }, detailText(r)),
+      !missed && h('div', { class: 'muted rv-detail' }, detailText(r, gray)),
     ),
     h(
       'div',
@@ -170,6 +199,7 @@ function rowEl(r: ReviewRound, index: number, rapid: boolean): HTMLElement {
       bonus && h('div', { class: 'muted' }, bonus),
     ),
     !missed &&
+      !gray &&
       h(
         'div',
         { class: 'rv-notes' },
@@ -189,12 +219,13 @@ export function reviewSheet(d: ReviewData, onClose: () => void): HTMLElement {
   const backBtn = h('button', { class: 'btn link', type: 'button' }, 'Back to results');
   backBtn.addEventListener('click', onClose);
   const rapid = d.settings ? isRapidMode(d.settings.mode) : false;
+  const gray = isGrayD(d);
   // With the mode known: "Your rounds" becomes a small heading over the mode's
   // name, with the game's setup under it.
   const title = d.settings
     ? h('div', { class: 'rv-heading' }, h('span', { class: 'rv-kicker' }, 'Your rounds'), h('h2', { id: 'rv-title' }, modeTitle(d.settings)))
     : h('h2', { id: 'rv-title' }, 'Your rounds');
-  const list = h('ol', { class: 'rv-list' }, ...d.rounds.map((r, i) => rowEl(r, i, rapid)));
+  const list = h('ol', { class: 'rv-list' }, ...d.rounds.map((r, i) => rowEl(r, i, rapid, gray)));
   // On a very narrow phone the verdicts ("· Good") are dropped rather than cut
   // to "· Go…": all of them, as soon as one does not fit, so the rows stay
   // alike. ΔE right under it says the same thing more precisely.
@@ -211,7 +242,7 @@ export function reviewSheet(d: ReviewData, onClose: () => void): HTMLElement {
     d.settings && h('p', { class: 'muted rv-setup' }, setupText(d.settings)),
     metaEl(d),
     tipEl(d),
-    legendEl(),
+    legendEl(gray),
     list,
     saveBtn,
     backBtn,
@@ -376,7 +407,8 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
   }
 
   // Tip box
-  const tip = summaryTip(d.rounds);
+  const gray = isGrayD(d);
+  const tip = tipText(d);
   if (tip) {
     y += 4;
     const tipFont = `500 12.5px ${FONT}`;
@@ -394,21 +426,23 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     y += boxH + 10;
   }
 
-  // Legend
+  // Legend (no bars for grays)
   text(LEGEND, PAD, y + 12.5, `400 11.5px ${FONT}`, C.muted);
   y += 18;
-  ctx.font = `400 11.5px ${FONT}`;
-  let lx = PAD;
-  text('Bars:', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
-  lx += ctx.measureText('Bars:').width + 7;
-  if (draw) drawTick(ctx, lx + 3, y + 1, y + 16);
-  lx += 10;
-  text('target', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
-  lx += ctx.measureText('target').width + 14;
-  if (draw) drawDot(ctx, lx, y + 8.5, '#9a9aa3');
-  lx += 10;
-  text('your pick', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
-  y += 24;
+  if (!gray) {
+    ctx.font = `400 11.5px ${FONT}`;
+    let lx = PAD;
+    text('Bars:', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
+    lx += ctx.measureText('Bars:').width + 7;
+    if (draw) drawTick(ctx, lx + 3, y + 1, y + 16);
+    lx += 10;
+    text('target', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
+    lx += ctx.measureText('target').width + 14;
+    if (draw) drawDot(ctx, lx, y + 8.5, '#9a9aa3');
+    lx += 10;
+    text('your pick', lx, y + 12.5, `400 11.5px ${FONT}`, C.muted);
+  }
+  y += gray ? 6 : 24;
 
   // Rounds
   const colW = contentW / 3;
@@ -438,8 +472,9 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     const [titleY, hexY] = missed ? [17, 37] : [13, 29];
     text(roundLabel, tx, top + titleY, `700 15px ${FONT}`, C.text);
     text(` · ${missed ? 'No pick' : matchLabel(r.deltaE as number)}`, tx + rw, top + titleY, `400 14px ${FONT}`, C.muted);
-    text(missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`, tx, top + hexY, `400 12px ${MONO}`, C.text);
-    if (!missed) text(detailText(r), tx, top + 44, `400 11.5px ${FONT}`, C.muted);
+    if (gray) text(grayLine(r), tx, top + hexY, `400 12px ${FONT}`, C.text);
+    else text(missed ? `Target ${r.target}` : `${r.target} → ${r.pick}`, tx, top + hexY, `400 12px ${MONO}`, C.text);
+    if (!missed) text(detailText(r, gray), tx, top + 44, `400 11.5px ${FONT}`, C.muted);
     // Right, centred on the row: the points, and in the rapid modes the bonus under them.
     const bonus = bonusText(r, rapid);
     if (bonus) {
@@ -450,7 +485,7 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     }
     y = top + 44;
 
-    if (!missed) {
+    if (!missed && !gray) {
       y += 14;
       reviewNotes(r.target, r.pick as string).forEach((n, i) => {
         const x = PAD + i * colW;
@@ -467,7 +502,13 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
     ctx.fillRect(PAD, y, contentW, 1);
   }
   y += 10;
-  text('Hue = slider · Saturation = left/right · Brightness = up/down', PAD, y + 12, `400 11px ${FONT}`, C.muted);
+  text(
+    gray ? 'Scale: 0 = black, 100 = white, 50 = the gray that looks halfway' : 'Hue = slider · Saturation = left/right · Brightness = up/down',
+    PAD,
+    y + 12,
+    `400 11px ${FONT}`,
+    C.muted,
+  );
   y += 18 + PAD;
   return Math.ceil(y);
 }

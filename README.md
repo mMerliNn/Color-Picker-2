@@ -2,10 +2,11 @@
 
 Up to 30 players join a room with a 5-letter code and match the **same set of colors**
 (5 or 10 rounds, 15 s to 1 minute each, or **unlimited time in solo games**), either with the color
-on screen (**Classic**) or from memory (**Memory**), each also as **Rapid**: against the clock, with
+on screen (**Classic**) or from memory (**Memory**). A third kind of game, **Grayscale**, asks how
+light a gray is, from 0 (black) to 100 (white). Each also comes as **Rapid**: against the clock, with
 a speed bonus and a shot clock. Scores are computed on the server from the CIEDE2000
 color difference, and every pick is stored in SQLite. Each player has a personal
-**history analysis page** for each game mode (`/stats`, `/stats/rapid`, `/stats/memory`, `/stats/memory-rapid`): error by hue, lightness/saturation bias, speed vs.
+**history analysis page** for each game mode (`/stats`, `/stats/rapid`, `/stats/memory`, `/stats/memory-rapid`, `/stats/grayscale`, `/stats/grayscale-rapid`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
 
 - **Client:** TypeScript + Vite, no framework (about 8 kB gzipped for the game, 5 kB more for the stats page), `vanilla-colorful` picker, hand-written SVG charts
@@ -116,11 +117,12 @@ npm run typecheck
 Scoring: `points = round(100 * exp(-ΔE / 18))` per round. Ties are broken by total time. In the
 rapid modes a locked-in pick also earns a speed bonus (below).
 
-**Choosing a mode (lobby):** *Mode* picks a category (Classic, Memory), then *Variant* a mode inside
-it (Standard or Rapid in both). The categories are `MODE_CATEGORIES` in `src/shared/protocol.ts`;
-each variant is still a mode of its own (`classic`, `rapid`, `memory`, `memory-rapid`) with its own
-scores and stats page. What a mode does is described by its features in `MODE_FEATURES`
-(`memory`: the color hides before picking; `rapid`: speed bonus and shot clock), and the code checks
+**Choosing a mode (lobby):** *Mode* picks a category (Classic, Memory, Grayscale), then *Variant* a
+mode inside it (Standard or Rapid in all three). The categories are `MODE_CATEGORIES` in
+`src/shared/protocol.ts`; each variant is still a mode of its own (`classic`, `rapid`, `memory`,
+`memory-rapid`, `grayscale`, `grayscale-rapid`) with its own scores and stats page. What a mode does
+is described by its features in `MODE_FEATURES` (`memory`: the color hides before picking; `rapid`:
+speed bonus and shot clock; `gray`: grays judged on a 0-100 slider), and the code checks
 those features, never mode names, so a new combination is one entry there. The Variant row is
 always there and a variant's own setting sits inside its selected button (the Memory variants' show
 time: "Standard · 3 s ⌄", "Rapid · 3 s ⌄"), as a plain `<select>` so phones open their own picker.
@@ -174,7 +176,30 @@ Once the color has hidden, the server never sends it again: someone who reconnec
 the two squares, which stay in place invisibly, so nothing on the screen moves between watching,
 the static, picking and the result.
 
-**Time per round:** 15, 20, 30 or 60 seconds, or **Unlimited (solo only)**. An unlimited round has no
+**Grayscale mode** (lobby: Mode *Grayscale*, Variant Standard or Rapid): each round shows a gray
+between a black reference (0) and a white one (100), and the player sets a **0-100 slider** to how
+light it looks. The details that keep it fair:
+- **The scale is perceptual lightness (CIE L\*):** 50 is the gray that *looks* halfway. `#808080`,
+  "50%" in hex, looks like 54. `grayOf()` and `grayValue()` in `src/shared/colors.ts` convert both ways
+  (exact for every whole number from 0 to 100). Each game spreads its grays from dark to light, one
+  per band (`generateGrays()`).
+- **The slider has no gradient on it**, which would turn judging into matching. It starts in the
+  middle but counts as no answer, and Lock in stays off, until the player moves it, so leaving it
+  alone never earns a free 50. The answer travels as the gray it stands for, like any other pick,
+  so drafts, the shot clock and storage work unchanged.
+- **Scored on the plain difference** ("off by 10"; `grayError()`), through the same points curve as
+  ΔE in the other modes, so off by 10 is always 57 points. ΔE itself forgives very dark and very light
+  grays more (59 to 72 points for the same miss), which would not match "10 too dark". The result
+  shows the real gray beside the answer in the same place ("Real · yours"), with "You said 40, it was 42: 2 too dark" under the headline.
+  The review shows "Real 42 · you 40" and "off by 2" (no hue/saturation bars), standings say
+  "Avg off", and the stats page leaves out the hue and saturation charts.
+- **Its own time options:** 10, 20 (default) or 30 seconds (`GRAY_SECONDS_OPTIONS`; one slider is
+  quick to set). `fitSettings()` keeps every mode's settings valid: switching to Grayscale on 1
+  minute or Unlimited gives 20 s, and back to Classic on 10 s gives 20 s.
+- On a phone, three Mode buttons no longer fit beside the labels, so the lobby puts each label
+  above its control there.
+
+**Time per round:** 15, 20, 30 or 60 seconds, or **Unlimited (solo only)** (Grayscale: 10, 20 or 30). An unlimited round has no
 timer and ends when the player locks in. It exists only for single-player games: with two or more
 players one person could stall everyone, so the server refuses it (`solo_only`), the lobby disables
 the option while others are connected, and a lobby set to unlimited falls back to 20 seconds when a
@@ -206,8 +231,9 @@ picks(id, game_id, round, client_id, player_name, target_hex, pick_hex, delta_e,
 ```
 
 `*_l/c/h` are CIE LCH values (hue is NULL for near-grays). Missed rounds have `pick_hex = NULL`.
-`mode` is `classic`, `rapid`, `memory` or `memory-rapid` (`memorize_seconds` is set for the memory
-modes only). `mode` and `memorize_seconds` came in schema version 2. `shot_seconds` (version 3) is
+`mode` is `classic`, `rapid`, `memory`, `memory-rapid`, `grayscale` or `grayscale-rapid`
+(`memorize_seconds` is set for the memory modes only). In the grayscale modes the target and pick
+are grays and `delta_e` holds the plain difference on the 0-100 scale. `mode` and `memorize_seconds` came in schema version 2. `shot_seconds` (version 3) is
 from the first Rapid version's fixed shot clock and is no longer filled. An older database is
 upgraded on start, and games logged before modes existed are marked `classic`. In the rapid modes,
 `score` includes the speed bonus; the bonus itself is
@@ -234,9 +260,9 @@ Every player gets a private page about their own play, linked from the home and 
 
 **One page per game mode.** Matching a color on screen and matching it from memory are different
 skills (memory errors are much bigger), so each mode has its own page built from that mode's games
-only, with its own "everyone" comparison: `/stats` for Classic, `/stats/rapid`, `/stats/memory` and
-`/stats/memory-rapid`. A switcher at the top of the page, grouped like the lobby ("Classic: Standard
-| Rapid", "Memory: Standard | Rapid"), moves between them, and the final screen links straight to the page
+only, with its own "everyone" comparison: `/stats` for Classic, `/stats/rapid`, `/stats/memory`,
+`/stats/memory-rapid`, `/stats/grayscale` and `/stats/grayscale-rapid`. A switcher at the top of the
+page, grouped like the lobby ("Classic: Standard | Rapid", "Memory: …", "Grayscale: …"), moves between them, and the final screen links straight to the page
 of the mode just played. The API takes the mode in the body (`{ clientId, mode }`; no mode means
 Classic, an unknown one is a 400).
 

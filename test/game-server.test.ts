@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deltaE, round2, scoreFromDeltaE } from '../src/shared/colors.js';
+import { deltaE, grayOf, grayValue, round2, scoreFromDeltaE } from '../src/shared/colors.js';
 import { DEFAULT_SETTINGS, MAX_PLAYERS, type ServerMessage } from '../src/shared/protocol.js';
 import { GameStore } from '../src/server/db.js';
 import { GameServer, type Session } from '../src/server/game-server.js';
@@ -1081,6 +1081,64 @@ describe('pick times in the final results', () => {
     const fin = ann.conn.last('final')!;
     expect(fin.yourRounds[0]).toMatchObject({ timeMs: 4000, lockedIn: true, bonus: 40, score: 140 });
     expect(fin.standings[0]).toMatchObject({ total: 700, avgTimeMs: 4000 });
+  });
+});
+
+describe('grayscale mode', () => {
+  const round = (c: Client) => c.conn.last('round')!;
+  const result = (c: Client, name: string) => c.conn.last('reveal')!.results.find((x) => x.name === name)!;
+
+  it('offers its own times: switching to it from 1 minute gives 20 s, and 10 s works', () => {
+    const { clients } = lobby(['Ann'], { roundSeconds: 60 });
+    const [ann] = clients as [Client];
+    send(ann, { t: 'settings', settings: { mode: 'grayscale' } });
+    expect(ann.conn.last('state')!.settings).toMatchObject({ mode: 'grayscale', roundSeconds: 20 });
+    send(ann, { t: 'settings', settings: { roundSeconds: 10 } });
+    expect(ann.conn.last('state')!.settings.roundSeconds).toBe(10);
+    send(ann, { t: 'settings', settings: { mode: 'classic' } }); // 10 s is not a classic option
+    expect(ann.conn.last('state')!.settings).toMatchObject({ mode: 'classic', roundSeconds: 20 });
+  });
+
+  it('shows grays and scores the plain difference on the 0-100 scale', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5, roundSeconds: 10, mode: 'grayscale' });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    const target = round(ann).color!;
+    expect(grayOf(grayValue(target))).toBe(target); // a gray from the scale
+    send(ann, { t: 'pick', hex: grayOf(grayValue(target) - 10) }); // 10 too dark
+    send(bob, { t: 'pick', hex: target });
+    expect(result(ann, 'Ann')).toMatchObject({ deltaE: 10, score: 57, bonus: 0 });
+    expect(result(bob, 'Bob')).toMatchObject({ deltaE: 0, score: 100 });
+  });
+
+  it('closes a 10-second round after 10 seconds', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, roundSeconds: 10, mode: 'grayscale' });
+    start(clients[0]!);
+    vi.advanceTimersByTime(10_000 + GRACE - 1);
+    expect(clients[0]!.conn.last('reveal')).toBeUndefined();
+    vi.advanceTimersByTime(1);
+    expect(clients[0]!.conn.last('reveal')).toBeDefined();
+  });
+
+  it('has a rapid variant with the speed bonus and the shot clock', () => {
+    const { clients } = lobby(['Ann', 'Bob'], { rounds: 5, roundSeconds: 20, mode: 'grayscale-rapid' });
+    const [ann, bob] = clients as [Client, Client];
+    start(ann);
+    vi.advanceTimersByTime(4000);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(bob.conn.last('shotClock')).toMatchObject({ shortened: true });
+    send(bob, { t: 'pick', hex: round(bob).color! });
+    expect(result(ann, 'Ann')).toMatchObject({ deltaE: 0, bonus: 40, score: 140 });
+  });
+
+  it('logs grayscale games under their own mode', () => {
+    const { clients } = lobby(['Ann'], { rounds: 5, mode: 'grayscale' });
+    const [ann] = clients as [Client];
+    start(ann);
+    send(ann, { t: 'pick', hex: round(ann).color! });
+    expect(store.listGames()[0]).toMatchObject({ mode: 'grayscale', memorize_seconds: null });
+    expect(store.picksForClient(ann.clientId, 'grayscale')).toHaveLength(1);
+    expect(store.picksForClient(ann.clientId)).toEqual([]); // not in the classic stats
   });
 });
 

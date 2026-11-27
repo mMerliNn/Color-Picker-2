@@ -10,7 +10,10 @@ export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ROUND_OPTIONS = [5, 10] as const;
 /** `roundSeconds` value meaning "no time limit". Only allowed in solo games. */
 export const UNLIMITED_SECONDS = 0;
+/** Time per round in the color modes. */
 export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
+/** Time per round in the grayscale modes: one slider is quick to set. */
+export const GRAY_SECONDS_OPTIONS = [10, 20, 30] as const;
 
 /**
  * Classic: the target stays on screen while you match it.
@@ -18,11 +21,13 @@ export const SECONDS_OPTIONS = [15, 20, 30, 60, UNLIMITED_SECONDS] as const;
  * Memory: the target shows for `memorizeSeconds`, then hides behind a moment of
  * static, and the player matches it from memory.
  * Memory Rapid: Memory against the clock.
+ * Grayscale (and Grayscale Rapid): judge how light a gray is, from 0 (black)
+ * to 100 (white), with a slider.
  *
  * Each mode is scored, logged and analysed on its own (its own stats page).
  * In the lobby, modes are grouped into categories (MODE_CATEGORIES below).
  */
-export const MODE_OPTIONS = ['classic', 'rapid', 'memory', 'memory-rapid'] as const;
+export const MODE_OPTIONS = ['classic', 'rapid', 'memory', 'memory-rapid', 'grayscale', 'grayscale-rapid'] as const;
 export type GameMode = (typeof MODE_OPTIONS)[number];
 
 /**
@@ -31,19 +36,30 @@ export type GameMode = (typeof MODE_OPTIONS)[number];
  * - memory: the color shows for `memorizeSeconds`, then hides before picking.
  * - rapid: locking in early earns a speed bonus, and the first lock-in halves
  *   everyone else's time left (the shot clock, see shotClockDeadline).
+ * - gray: the targets are grays and the answer is a number from 0 (black) to
+ *   100 (white) on a slider, scored by the plain difference (grayError).
  */
 export interface ModeFeatures {
   memory: boolean;
   rapid: boolean;
+  gray: boolean;
 }
 export const MODE_FEATURES: Record<GameMode, ModeFeatures> = {
-  classic: { memory: false, rapid: false },
-  rapid: { memory: false, rapid: true },
-  memory: { memory: true, rapid: false },
-  'memory-rapid': { memory: true, rapid: true },
+  classic: { memory: false, rapid: false, gray: false },
+  rapid: { memory: false, rapid: true, gray: false },
+  memory: { memory: true, rapid: false, gray: false },
+  'memory-rapid': { memory: true, rapid: true, gray: false },
+  grayscale: { memory: false, rapid: false, gray: true },
+  'grayscale-rapid': { memory: false, rapid: true, gray: true },
 };
 export const isMemoryMode = (mode: GameMode): boolean => MODE_FEATURES[mode].memory;
 export const isRapidMode = (mode: GameMode): boolean => MODE_FEATURES[mode].rapid;
+export const isGrayMode = (mode: GameMode): boolean => MODE_FEATURES[mode].gray;
+
+/** The time-per-round choices a mode offers. */
+export function secondsOptions(mode: GameMode): readonly number[] {
+  return isGrayMode(mode) ? GRAY_SECONDS_OPTIONS : SECONDS_OPTIONS;
+}
 
 export interface ModeVariant {
   mode: GameMode;
@@ -74,6 +90,13 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
     variants: [
       { mode: 'memory', label: 'Standard' },
       { mode: 'memory-rapid', label: 'Rapid' },
+    ],
+  },
+  {
+    label: 'Grayscale',
+    variants: [
+      { mode: 'grayscale', label: 'Standard' },
+      { mode: 'grayscale-rapid', label: 'Rapid' },
     ],
   },
 ];
@@ -120,6 +143,17 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = { rounds: 5, roundSeconds: 20, mode: 'classic', memorizeSeconds: 3 };
+
+/**
+ * The settings adjusted to what their mode allows: the mode's own time options
+ * (switching to Grayscale on 1 minute, or back to Classic on 10 s, gives 20 s),
+ * and always a deadline in the rapid modes (their speed bonus needs one).
+ */
+export function fitSettings(s: GameSettings): GameSettings {
+  const allowed = secondsOptions(s.mode).includes(s.roundSeconds);
+  const needsDeadline = isRapidMode(s.mode) && s.roundSeconds === UNLIMITED_SECONDS;
+  return allowed && !needsDeadline ? s : { ...s, roundSeconds: DEFAULT_SETTINGS.roundSeconds };
+}
 
 export interface PlayerInfo {
   id: string; // public, per-room id (never the private clientId)
@@ -302,7 +336,10 @@ export function cleanSettings(raw: unknown): Partial<GameSettings> | null {
     out.rounds = r.rounds as number;
   }
   if (r.roundSeconds !== undefined) {
-    if (!SECONDS_OPTIONS.includes(r.roundSeconds as (typeof SECONDS_OPTIONS)[number])) return null;
+    // Any time some mode offers; the room then fits it to the chosen mode (fitSettings).
+    if (!(SECONDS_OPTIONS as readonly unknown[]).includes(r.roundSeconds) && !(GRAY_SECONDS_OPTIONS as readonly unknown[]).includes(r.roundSeconds)) {
+      return null;
+    }
     out.roundSeconds = r.roundSeconds as number;
   }
   if (r.mode !== undefined) {

@@ -28,6 +28,8 @@ export const STATS_PAGES: Record<GameMode, StatsPageInfo> = {
   rapid: { label: 'Classic · Rapid', intro: 'Matching with the color on screen, against the clock.' },
   memory: { label: 'Memory', intro: 'Matching from memory, after the color was hidden.' },
   'memory-rapid': { label: 'Memory · Rapid', intro: 'Matching from memory, against the clock.' },
+  grayscale: { label: 'Grayscale', intro: 'Judging how light a gray is, from 0 (black) to 100 (white).' },
+  'grayscale-rapid': { label: 'Grayscale · Rapid', intro: 'Judging how light a gray is, against the clock.' },
 };
 
 /** The mode shown at plain /stats. */

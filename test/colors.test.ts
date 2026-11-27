@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   deltaE,
   generateColors,
+  generateGrays,
+  grayError,
+  grayOf,
+  grayValue,
   hueDiff,
   mulberry32,
   scoreFromDeltaE,
@@ -9,7 +13,7 @@ import {
   toLch,
 } from '../src/shared/colors.js';
 import { matchLabel } from '../src/shared/labels.js';
-import { shotClockDeadline } from '../src/shared/protocol.js';
+import { DEFAULT_SETTINGS, cleanSettings, fitSettings, shotClockDeadline } from '../src/shared/protocol.js';
 
 describe('generateColors', () => {
   it('is deterministic for a seed and differs between seeds', () => {
@@ -60,6 +64,40 @@ describe('Rapid speed bonus', () => {
   it('is proportional to accuracy, so a fast careless pick earns little', () => {
     expect(speedBonus(20, 0, 20_000)).toBe(10);
     expect(speedBonus(0, 0, 20_000)).toBe(0);
+  });
+});
+
+describe('grayscale modes', () => {
+  it('turns every number from 0 to 100 into a gray and back', () => {
+    for (let n = 0; n <= 100; n++) expect(grayValue(grayOf(n))).toBe(n);
+    expect(grayOf(0)).toBe('#000000');
+    expect(grayOf(100)).toBe('#ffffff');
+    expect(grayValue('#808080')).toBe(54); // 50% in hex looks like 54, not 50
+  });
+
+  it('spreads each game from dark to light: one gray per band', () => {
+    const grays = generateGrays(1234, 5).map(grayValue);
+    const bands = grays.map((l) => Math.min(4, Math.floor((l - 5) / 18))).sort();
+    expect(bands).toEqual([0, 1, 2, 3, 4]);
+    expect(generateGrays(1234, 5)).toEqual(generateGrays(1234, 5)); // same seed, same grays
+    for (const hex of generateGrays(99, 10)) expect(toLch(hex).c).toBeLessThan(0.5); // truly gray
+  });
+
+  it('scores the plain difference, so "off by 10" always costs the same', () => {
+    for (const l of [10, 50, 90]) expect(grayError(grayOf(l), grayOf(l - 10))).toBe(10);
+    expect(scoreFromDeltaE(grayError(grayOf(50), grayOf(60)))).toBe(57);
+  });
+
+  it('has its own time options: 10, 20 or 30 seconds', () => {
+    expect(cleanSettings({ roundSeconds: 10 })).toEqual({ roundSeconds: 10 });
+    expect(cleanSettings({ roundSeconds: 25 })).toBeNull();
+    const fit = (mode: string, roundSeconds: number) => fitSettings({ ...DEFAULT_SETTINGS, mode, roundSeconds } as never).roundSeconds;
+    expect(fit('grayscale', 10)).toBe(10);
+    expect(fit('grayscale', 60)).toBe(20); // not offered for grays
+    expect(fit('grayscale', 0)).toBe(20);
+    expect(fit('classic', 10)).toBe(20); // 10 s is a grayscale-only option
+    expect(fit('classic', 0)).toBe(0); // unlimited stays for classic (solo)
+    expect(fit('rapid', 0)).toBe(20); // the rapid modes need a deadline
   });
 });
 

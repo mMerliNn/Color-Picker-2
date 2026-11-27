@@ -1,17 +1,18 @@
 import 'vanilla-colorful/hex-color-picker.js';
 import { formatClock, formatSeconds, matchLabel } from '../shared/labels.js';
-import { RAPID_MAX_BONUS } from '../shared/colors.js';
+import { RAPID_MAX_BONUS, grayOf, grayValue } from '../shared/colors.js';
 import {
   MAX_NAME_LENGTH,
   MEMORIZE_OPTIONS,
   MODE_CATEGORIES,
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
-  SECONDS_OPTIONS,
   UNLIMITED_SECONDS,
   categoryOf,
+  isGrayMode,
   isMemoryMode,
   isRapidMode,
+  secondsOptions,
   type GameMode,
   type GameSettings,
   type ModeCategory,
@@ -152,6 +153,10 @@ function modeHint(s: GameSettings): string {
       return 'Lock in early for up to +50% points. The first lock-in halves the time left (10 s max).';
     case 'memory':
       return `The color shows for ${s.memorizeSeconds} s, then hides behind static. Match it from memory.`;
+    case 'grayscale':
+      return 'How light is each gray, from 0 (black) to 100 (white)? Turn off night mode first.';
+    case 'grayscale-rapid':
+      return 'Rate each gray from 0 (black) to 100 (white). Lock in early for up to +50%.';
     case 'memory-rapid':
       // Short enough for two lines even on a 320 px phone.
       return `Shown for ${s.memorizeSeconds} s. Lock in early for up to +50%; the first lock-in halves the time (10 s max).`;
@@ -277,13 +282,10 @@ export function lobbyView(ctx: Ctx): View {
 
   const roundsSel = h('select', { id: 'rounds' });
   for (const n of ROUND_OPTIONS) roundsSel.append(h('option', { value: n }, `${n} rounds`));
+  // Each mode offers its own times (Grayscale: 10, 20 or 30 s), so the choices
+  // are rebuilt whenever the mode changes.
   const secondsSel = h('select', { id: 'seconds' });
-  const secondsOptions = new Map<number, HTMLOptionElement>();
-  for (const n of SECONDS_OPTIONS) {
-    const option = h('option', { value: n }, formatSeconds(n));
-    secondsOptions.set(n, option);
-    secondsSel.append(option);
-  }
+  let shownTimes = '';
   roundsSel.addEventListener('change', () => ctx.actions.setSettings({ rounds: Number(roundsSel.value) }));
   secondsSel.addEventListener('change', () => ctx.actions.setSettings({ roundSeconds: Number(secondsSel.value) }));
   const modes = modePicker(ctx);
@@ -350,11 +352,16 @@ export function lobbyView(ctx: Ctx): View {
       modes.set(r.settings, isHost);
       setText(hint, modeHint(r.settings));
       roundsSel.value = String(r.settings.rounds);
+      const times = secondsOptions(r.settings.mode);
+      if (times.join(',') !== shownTimes) {
+        shownTimes = times.join(',');
+        secondsSel.replaceChildren(...times.map((n) => h('option', { value: n }, formatSeconds(n))));
+      }
       secondsSel.value = String(r.settings.roundSeconds);
       // Unlimited is solo-only (unavailable while anyone else is in the room),
       // and never in the rapid modes, whose speed bonus needs a deadline.
       const others = r.players.filter((p) => p.connected).length > 1;
-      const unlimitedOption = secondsOptions.get(UNLIMITED_SECONDS);
+      const unlimitedOption = secondsSel.querySelector<HTMLOptionElement>(`option[value="${UNLIMITED_SECONDS}"]`);
       if (unlimitedOption) unlimitedOption.disabled = others || isRapidMode(r.settings.mode);
       unlimitedHint.hidden = r.settings.roundSeconds !== UNLIMITED_SECONDS;
       roundsSel.disabled = secondsSel.disabled = !isHost;
@@ -364,6 +371,48 @@ export function lobbyView(ctx: Ctx): View {
   };
   view.update?.();
   return view;
+}
+
+// ---------------------------------------------------------------------------
+// Grayscale modes: the stage
+// ---------------------------------------------------------------------------
+
+/**
+ * Black and white references with the gray (or, on the result, the real gray
+ * beside your answer) between them. The references sit apart from the gray, so
+ * they anchor the scale without tinting it.
+ */
+function grayStage(middle: HTMLElement, caption: string): HTMLElement {
+  const ref = (hex: string, label: string) => {
+    const s = h('div', { class: 'gray-swatch gray-ref', role: 'img', 'aria-label': `${label}, reference` });
+    s.style.backgroundColor = hex;
+    return h('figure', null, s, h('figcaption', null, label));
+  };
+  return h(
+    'div',
+    { class: 'gray-stage' },
+    ref(grayOf(0), '0 · black'),
+    h('figure', null, middle, h('figcaption', null, caption)),
+    ref(grayOf(100), '100 · white'),
+  );
+}
+
+/** The result's middle square: the real gray on the left, your answer on the right. */
+function grayPair(target: string, pick: string | null): HTMLElement {
+  const real = h('div');
+  real.style.backgroundColor = target;
+  const yours = h('div', { class: pick ? '' : 'swatch-empty' });
+  if (pick) yours.style.backgroundColor = pick;
+  const label = pick ? `It was ${grayValue(target)}, you said ${grayValue(pick)}` : `It was ${grayValue(target)}, no answer`;
+  return h('div', { class: 'gray-swatch gray-pair', role: 'img', 'aria-label': label }, real, yours);
+}
+
+/** "You said 40, it was 42: 2 too dark." */
+function grayVerdict(pick: string, target: string): string {
+  const said = grayValue(pick);
+  const was = grayValue(target);
+  const off = said - was;
+  return off === 0 ? `You said ${said}, it was ${was}: exactly right.` : `You said ${said}, it was ${was}: ${Math.abs(off)} too ${off < 0 ? 'dark' : 'light'}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +455,8 @@ export function playView(ctx: Ctx): View {
   const watchMs = ctx.model.room!.settings.memorizeSeconds * 1000;
   // Rapid modes: a speed bonus that shrinks as the round goes on, and a shot clock.
   const rapid = isRapidMode(ctx.model.room!.settings.mode);
+  // Grayscale modes: the answer is a number on a slider instead of a color.
+  const gray = isGrayMode(ctx.model.room!.settings.mode);
   let current = round.youPick ?? NEUTRAL;
   let locked = round.youPick !== null;
   // Only a color the player actually chose is auto-submitted at the deadline.
@@ -549,6 +600,38 @@ export function playView(ctx: Ctx): View {
   shown?.setAttribute('aria-label', 'Target color: watch carefully');
   const noise = h('div', { class: 'swatch memory-noise', 'aria-hidden': 'true' });
 
+  // ---- grayscale modes: judge the gray with a slider ----
+  // A plain 0-100 slider: no gradient on it, which would turn judging into
+  // matching. It starts in the middle but counts as no answer (and Lock in stays
+  // off) until the player moves it, so leaving it alone never earns a free 50.
+  // Its answer travels as the gray it stands for, like any other pick.
+  const grayTarget = h('div', { class: 'gray-swatch gray-target', role: 'img', 'aria-label': 'The gray to judge' });
+  if (round.color) grayTarget.style.backgroundColor = round.color;
+  const grayReadout = h('span', { class: 'num' }, round.youPick ? String(grayValue(round.youPick)) : '–');
+  const grayRange = h('input', {
+    type: 'range',
+    min: 0,
+    max: 100,
+    step: 1,
+    value: round.youPick ? grayValue(round.youPick) : 50,
+    class: 'gray-range',
+    'aria-label': 'How light is the gray, from 0 black to 100 white',
+  });
+  grayRange.addEventListener('input', () => {
+    if (locked) return;
+    touched = true;
+    submitBtn.disabled = false;
+    setText(grayReadout, grayRange.value);
+    setCurrent(grayOf(Number(grayRange.value)));
+  });
+  const grayAnswer = h(
+    'div',
+    { class: 'gray-answer' },
+    h('div', { class: 'gray-readout' }, h('span', { class: 'muted' }, 'Your estimate (0–100)'), grayReadout),
+    grayRange,
+    h('div', { class: 'gray-ends muted', 'aria-hidden': 'true' }, h('span', null, '0 black'), h('span', null, 'white 100')),
+  );
+
   const lock = () => {
     locked = true;
     if (draftTimer) clearTimeout(draftTimer);
@@ -557,10 +640,15 @@ export function playView(ctx: Ctx): View {
     submitBtn.textContent = 'Locked in ✓';
     picker.setAttribute('inert', '');
     hexInput.disabled = true;
-    if (round.youPick) setCurrent(round.youPick);
+    grayRange.disabled = true;
+    if (round.youPick) {
+      setCurrent(round.youPick);
+      grayRange.value = String(grayValue(round.youPick));
+      setText(grayReadout, grayRange.value);
+    }
   };
   const submit = () => {
-    if (locked || !unlocked) return;
+    if (locked || !unlocked || (gray && !touched)) return;
     if (ctx.actions.pick(current)) {
       if (rapid) lockedPct = bonusPct(ctx.now());
       lock();
@@ -579,15 +667,16 @@ export function playView(ctx: Ctx): View {
       timeLabel,
     ),
     h('div', { class: 'timer', 'aria-hidden': 'true', hidden: unlimited && !memory }, bar),
-    stage,
-    picker,
-    h('div', { class: 'row center' }, h('label', { for: 'hex', class: 'muted' }, 'Hex'), hexInput),
+    ...(gray
+      ? [grayStage(grayTarget, 'How light is it?'), grayAnswer]
+      : [stage, picker, h('div', { class: 'row center' }, h('label', { for: 'hex', class: 'muted' }, 'Hex'), hexInput)]),
     submitBtn,
     progress,
     quitLink(ctx),
     announce,
   );
   hexInput.id = 'hex';
+  if (gray && !touched) submitBtn.disabled = true; // nothing to lock in yet
 
   // ---- memory phases ----
   type Phase = 'watch' | 'static' | 'pick';
@@ -700,8 +789,11 @@ export function playView(ctx: Ctx): View {
 // Round result
 // ---------------------------------------------------------------------------
 
-/** `withTime`: the final ranking also shows each player's average time to lock in (it breaks ties). */
-function standingsTable(rows: Standing[], youId: string, withAvg: boolean, withTime = false): HTMLElement {
+/**
+ * `withTime`: the final ranking also shows each player's average time to lock in (it breaks ties).
+ * `gray`: a grayscale mode, whose average error is "off by" on the 0-100 scale rather than ΔE.
+ */
+function standingsTable(rows: Standing[], youId: string, withAvg: boolean, withTime = false, gray = false): HTMLElement {
   const table = h(
     'table',
     { class: 'table' },
@@ -713,7 +805,10 @@ function standingsTable(rows: Standing[], youId: string, withAvg: boolean, withT
         null,
         h('th', null, '#'),
         h('th', null, 'Player'),
-        withAvg && h('th', { title: 'Average color distance (lower is better)' }, 'Avg ΔE'),
+        withAvg &&
+          (gray
+            ? h('th', { title: 'Average difference on the 0 to 100 scale (lower is better)' }, 'Avg off')
+            : h('th', { title: 'Average color distance (lower is better)' }, 'Avg ΔE')),
         withTime && h('th', { title: 'Average time to lock in, over the rounds locked in. Breaks ties.' }, 'Avg time'),
         h('th', null, 'Points'),
       ),
@@ -746,6 +841,7 @@ export function revealView(ctx: Ctx): View {
   const isLast = rv.index >= rv.total - 1;
   const memory = isMemoryMode(room.settings.mode);
   const rapid = isRapidMode(room.settings.mode);
+  const gray = isGrayMode(room.settings.mode);
   const revealMs = Math.max(1, rv.nextAt - rv.serverNow);
   const secs = (ms: number | null) => ((ms ?? 0) / 1000).toFixed(1);
 
@@ -759,8 +855,8 @@ export function revealView(ctx: Ctx): View {
 
   const headline =
     mine && mine.deltaE !== null
-      ? `${matchLabel(mine.deltaE)}  ·  ΔE ${mine.deltaE.toFixed(1)}  ·  +${mine.score} points`
-      : 'No pick this round  ·  +0 points';
+      ? `${matchLabel(mine.deltaE)}  ·  ${gray ? `off by ${mine.deltaE}` : `ΔE ${mine.deltaE.toFixed(1)}`}  ·  +${mine.score} points`
+      : `No ${gray ? 'answer' : 'pick'} this round  ·  +0 points`;
 
   const countdown = h('p', { class: 'muted center', role: 'status' });
   const timeLabel = h('span', { class: 'time-label', 'aria-hidden': 'true' });
@@ -778,9 +874,8 @@ export function revealView(ctx: Ctx): View {
           { class: 'muted' },
           r.deltaE === null
             ? 'missed'
-            : rapid
-              ? `ΔE ${r.deltaE.toFixed(1)} · ${r.lockedIn ? `${secs(r.timeMs)} s` : 'at the buzzer'}`
-              : `ΔE ${r.deltaE.toFixed(1)}`,
+            : (gray ? `off by ${r.deltaE}` : `ΔE ${r.deltaE.toFixed(1)}`) +
+                (rapid ? ` · ${r.lockedIn ? `${secs(r.timeMs)} s` : 'at the buzzer'}` : ''),
         ),
         rapid && r.deltaE !== null && h('span', { class: 'split', title: 'Points for the color + speed bonus' }, `${r.score - r.bonus} + ${r.bonus}`),
         h('span', { class: 'num' }, `+${r.score}`),
@@ -804,20 +899,25 @@ export function revealView(ctx: Ctx): View {
     { class: 'card reveal' },
     h('div', { class: 'play-head' }, h('h2', null, `Round ${rv.index + 1} result`), timeLabel),
     h('div', { class: 'timer quiet', 'aria-hidden': 'true' }, bar),
-    h(
-      'div',
-      { class: 'stage' },
-      h('figure', null, swatch(rv.target, 'Target color', memory ? 'target reveal-in' : 'target'), h('figcaption', null, memory ? 'The color' : 'Target')),
-      h('figure', null, swatch(mine?.pick ?? null, 'Your pick', 'target'), h('figcaption', null, 'Your pick')),
-    ),
+    gray
+      ? // Short enough to sit between "0 · black" and "100 · white" on a phone;
+        // the numbers are in the sentence under the headline.
+        grayStage(grayPair(rv.target, mine?.pick ?? null), mine?.pick ? 'Real · yours' : 'Real gray')
+      : h(
+          'div',
+          { class: 'stage' },
+          h('figure', null, swatch(rv.target, 'Target color', memory ? 'target reveal-in' : 'target'), h('figcaption', null, memory ? 'The color' : 'Target')),
+          h('figure', null, swatch(mine?.pick ?? null, 'Your pick', 'target'), h('figcaption', null, 'Your pick')),
+        ),
     h('p', { class: 'headline', role: 'status' }, headline),
+    gray && mine?.pick && h('p', { class: 'muted gray-verdict' }, grayVerdict(mine.pick, rv.target)),
     rapid && h('p', { class: 'muted bonus-line' }, bonusLine),
     skipBtn,
     countdown,
     h('h3', null, 'This round'),
     roundList,
     h('h3', null, 'Standings'),
-    standingsTable(rv.standings, youId, true),
+    standingsTable(rv.standings, youId, true, false, gray),
     quitLink(ctx),
   );
 
@@ -937,7 +1037,7 @@ export function finalView(ctx: Ctx): View {
     { class: 'card final' },
     h('h2', null, 'Final results'),
     podium,
-    standingsTable(fin.standings, room.youId, true, true),
+    standingsTable(fin.standings, room.youId, true, true, isGrayMode(room.settings.mode)),
     h('h3', null, 'The colors'),
     strip,
     reviewBtn,

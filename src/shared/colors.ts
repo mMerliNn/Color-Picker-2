@@ -63,6 +63,42 @@ export function generateColors(seed: number, count: number): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Grayscale modes: grays on a 0-100 lightness scale (CIE L*: 0 is black, 100
+// white, and 50 the gray that looks halfway, not #808080, which looks like 54)
+// ---------------------------------------------------------------------------
+
+/** The gray that looks `l` on the 0-100 scale. */
+export function grayOf(l: number): string {
+  return chroma.lab(Math.min(100, Math.max(0, l)), 0, 0).hex();
+}
+
+/** A gray's place on the 0-100 scale, as a whole number. grayValue(grayOf(n)) is n for every n in 0..100. */
+export function grayValue(hex: string): number {
+  return Math.round(chroma(hex).lab()[0] as number);
+}
+
+/** Gray targets: one per band from dark to light (5 to 95), shuffled, so every game covers the whole scale. */
+export function generateGrays(seed: number, count: number): string[] {
+  const rand = mulberry32(seed);
+  const bands = shuffleInPlace(
+    Array.from({ length: count }, (_, i) => i),
+    rand,
+  );
+  const size = 90 / count;
+  return bands.map((band) => grayOf(Math.round(5 + (band + rand()) * size)));
+}
+
+/**
+ * Grayscale modes' error: the plain difference on the 0-100 scale. Scored with
+ * the same points curve as ΔE in the other modes, but not with ΔE itself, which
+ * forgives very dark and very light grays more ("off by 10" would then score
+ * anywhere from 59 to 72 points, while the result says "10 too dark").
+ */
+export function grayError(target: string, pick: string): number {
+  return Math.abs(grayValue(pick) - grayValue(target));
+}
+
+// ---------------------------------------------------------------------------
 // Scoring
 // ---------------------------------------------------------------------------
 
