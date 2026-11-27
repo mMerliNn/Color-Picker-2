@@ -5,20 +5,29 @@ import type { GameMode, GameSettings } from './protocol.js';
 
 // ---------------------------------------------------------------------------
 // Weeks run from Monday 00:00 to the next Monday 00:00, Tokyo time (UTC+9, no
-// daylight saving time), and are numbered like ISO weeks of the Tokyo date
-// ("2026-W48"), so the number matches what a Japanese calendar shows.
+// daylight saving time). Each week has two names:
+// - its id, the ISO week of the Tokyo date ("2026-W48"): the key its colors and
+//   entries are stored under, and part of its secret seed. Never shown.
+// - its number, what players see: weeks since the challenge began ("Week 1",
+//   "Week 2", ...), counting on through new years.
 // ---------------------------------------------------------------------------
 
 const TOKYO_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEEK_MS = 7 * DAY_MS;
 
+/**
+ * Week 1: Monday 23 November 2026, 00:00 Tokyo time (Sunday 15:00 UTC), the
+ * week the challenge came out. Changing this renumbers every week.
+ */
+export const FIRST_WEEK_STARTS_AT = Date.UTC(2026, 10, 22, 15);
+
 export interface ChallengeWeek {
   /** "2026-W48": the key everything is stored under. */
   id: string;
   /** ISO week-numbering year (the first days of January can still be the previous year's week 52/53). */
   year: number;
-  /** 1..53 */
+  /** Shown to players: 1 for the first challenge week, then counting up for good (0 before it). */
   number: number;
   /** Monday 00:00 Tokyo time, as epoch ms. */
   startsAt: number;
@@ -37,9 +46,11 @@ export function challengeWeek(nowMs: number): ChallengeWeek {
   // the year's first Thursday.
   const thursday = new Date(monday + 3 * DAY_MS);
   const year = thursday.getUTCFullYear();
-  const number = Math.floor((thursday.getTime() - Date.UTC(year, 0, 1)) / WEEK_MS) + 1;
+  const isoWeek = Math.floor((thursday.getTime() - Date.UTC(year, 0, 1)) / WEEK_MS) + 1;
   const startsAt = monday - TOKYO_OFFSET_MS;
-  return { id: `${year}-W${String(number).padStart(2, '0')}`, year, number, startsAt, endsAt: startsAt + WEEK_MS };
+  // Weeks since the first one (never below 0, should the clock be far off).
+  const number = Math.max(0, Math.round((startsAt - FIRST_WEEK_STARTS_AT) / WEEK_MS) + 1);
+  return { id: `${year}-W${String(isoWeek).padStart(2, '0')}`, year, number, startsAt, endsAt: startsAt + WEEK_MS };
 }
 
 /** The week before `week`. */

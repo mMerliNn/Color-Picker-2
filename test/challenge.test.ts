@@ -16,7 +16,7 @@ describe('challengeWeek', () => {
   it('numbers weeks like ISO weeks of the Tokyo date', () => {
     const w = challengeWeek(Date.parse('2026-11-27T12:00:00Z'));
     expect(w.id).toBe('2026-W48');
-    expect(w.number).toBe(48);
+    expect(w.number).toBe(1); // the first challenge week
     // Monday 23 November, 00:00 in Tokyo is Sunday 22 November, 15:00 UTC.
     expect(new Date(w.startsAt).toISOString()).toBe('2026-11-22T15:00:00.000Z');
     expect(w.endsAt - w.startsAt).toBe(7 * 24 * 3600 * 1000);
@@ -35,6 +35,14 @@ describe('challengeWeek', () => {
     expect(challengeWeek(Date.parse('2027-01-01T03:00:00Z')).id).toBe('2026-W53'); // 2026 has 53 weeks
     expect(challengeWeek(Date.parse('2027-01-04T03:00:00Z')).id).toBe('2027-W01');
     expect(previousWeek(challengeWeek(Date.parse('2027-01-04T03:00:00Z'))).id).toBe('2026-W53');
+  });
+
+  it('shows weeks counted from the first challenge week, on through the new year', () => {
+    expect(challengeWeek(Date.parse('2026-11-30T03:00:00Z')).number).toBe(2);
+    expect(challengeWeek(Date.parse('2027-01-01T03:00:00Z')).number).toBe(6); // still the week of 28 December
+    expect(challengeWeek(Date.parse('2027-01-04T03:00:00Z')).number).toBe(7);
+    expect(challengeWeek(Date.parse('2027-11-22T03:00:00Z')).number).toBe(53);
+    expect(challengeWeek(Date.parse('2026-06-01T03:00:00Z')).number).toBe(0); // before it began
   });
 
   it('says how long is left in plain words', () => {
@@ -142,7 +150,7 @@ describe('weekly challenge games', () => {
     const ann = player('Ann');
     ann.play();
     const state = ann.conn.last('state');
-    expect(state?.challenge).toEqual({ week: WEEK, number: 48 });
+    expect(state?.challenge).toEqual({ week: WEEK, number: 1 });
     expect(state?.settings).toMatchObject({ mode: 'classic', rounds: 10, roundSeconds: 30 });
     expect(state?.phase).toBe('starting');
     // Never a lobby: the browser reads a challenge room in the lobby as "stopped".
@@ -281,7 +289,7 @@ describe('leaderboard', () => {
     expect(challenges.status('cid-x-00000000').lastWeek).toBeNull();
     vi.setSystemTime(Date.parse('2026-11-24T03:00:00Z')); // Tuesday of W48
     const status = challenges.status('cid-x-00000000');
-    expect(status.lastWeek?.number).toBe(47);
+    expect(status.lastWeek?.number).toBe(0); // the week before the first one
     expect(status.lastWeek?.top.map((r) => r.name)).toEqual(['P0', 'P1', 'P2']);
     expect(status.you).toBeNull();
   });

@@ -145,7 +145,7 @@ function playersText(n: number): string {
 }
 
 /**
- * "Weekly challenge · Week 48 · ends in 3 days · 85 players" with a Play
+ * "Weekly challenge · Week 3 · ends in 3 days · 85 players" with a Play
  * button, or your place once you have played (and a Resume button while your
  * attempt is still running in another tab). Last week's top 3 show during the
  * first days of a new week. The numbers come from /api/challenge.

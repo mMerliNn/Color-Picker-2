@@ -223,11 +223,14 @@ never resends it, but it was in the browser while it was shown, so the same appl
 ## Weekly challenge (`/challenge`)
 
 Everyone plays the **same 10 colors, alone, once a week**, and the results go on a public
-leaderboard. A card on the home screen says "Weekly challenge · Week 48 · Ends in 2 days · 85
+leaderboard. A card on the home screen says "Weekly challenge · Week 3 · Ends in 2 days · 85
 players" with a **Play** button (it uses the name typed above it).
 
-- **Weeks run Monday 00:00 to Monday 00:00, Tokyo time** (UTC+9, no daylight saving), numbered
-  like ISO weeks of the Tokyo date (`2026-W48`). `challengeWeek()` in `src/shared/challenge.ts`.
+- **Weeks run Monday 00:00 to Monday 00:00, Tokyo time** (UTC+9, no daylight saving). Players see
+  them counted from the first challenge week: Week 1 began Monday 23 November 2026
+  (`FIRST_WEEK_STARTS_AT`), and the count goes on through new years. Inside, each week is stored
+  under the ISO week of its Tokyo date (`2026-W48`), which is also part of its secret seed.
+  `challengeWeek()` in `src/shared/challenge.ts`.
 - **One try per player (browser) per week.** It counts from the moment the first color appears:
   quitting during the "get ready" countdown uses nothing up. Quitting later keeps the points so far
   (the entry is updated after every round), and the quit dialog says so before you confirm. Closing

@@ -27,7 +27,7 @@ export interface ReviewData {
   /** The game's mode and settings: the title ("Classic · Rapid") and the line under it. */
   settings?: GameSettings;
   /**
-   * A title of its own instead of the mode's name ("Weekly challenge · Week 48").
+   * A title of its own instead of the mode's name ("Weekly challenge · Week 3").
    * The mode's name then opens the line under it, so a saved image still says
    * which mode was played.
    */
