@@ -1102,6 +1102,10 @@ export function finalView(ctx: Ctx): View {
     );
   }
 
+  // The screen's card, built below (the weekly challenge has its own). The
+  // review opens inside it, so both kinds of results must set this one.
+  let el: HTMLElement;
+
   // Your own rounds (pick, ΔE, score), for the "Review my rounds" sheet.
   const me = fin.standings.find((s) => s.id === room.youId);
   const rounds = fin.yourRounds ?? []; // missing from a server older than this client
@@ -1109,7 +1113,16 @@ export function finalView(ctx: Ctx): View {
     me && rounds.length > 0
       ? (startAt?: number) =>
           openReview(
-            { player: me.name, total: me.total, avgDeltaE: me.avgDeltaE, date: new Date(), rounds, settings: room.settings },
+            {
+              player: me.name,
+              total: me.total,
+              avgDeltaE: me.avgDeltaE,
+              date: new Date(),
+              rounds,
+              settings: room.settings,
+              // A weekly challenge says so in its review and saved image.
+              title: room.challenge ? `Weekly challenge · Week ${room.challenge.number}` : undefined,
+            },
             el,
             startAt,
           )
@@ -1138,7 +1151,7 @@ export function finalView(ctx: Ctx): View {
     const home = h('button', { class: 'btn link', type: 'button' }, 'Back to the start');
     home.addEventListener('click', () => ctx.actions.leave());
     const avg = me?.avgDeltaE ?? null;
-    const el = h(
+    el = h(
       'section',
       { class: 'card final challenge-final' },
       h('p', { class: 'muted challenge-kicker' }, `Weekly challenge · Week ${room.challenge.number}`),
@@ -1167,7 +1180,7 @@ export function finalView(ctx: Ctx): View {
   const leaveBtn = h('button', { class: 'btn link', type: 'button' }, 'Leave room');
   leaveBtn.addEventListener('click', () => ctx.actions.leave());
 
-  const el = h(
+  el = h(
     'section',
     { class: 'card final' },
     h('h2', null, 'Final results'),

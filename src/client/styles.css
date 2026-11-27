@@ -1915,7 +1915,7 @@ body:has(.review-dialog[open]) {
   margin-bottom: 4px;
 }
 .challenge-final {
-  text-align: center;
+  text-align: left;
 }
 .challenge-final .strip {
   justify-content: center;

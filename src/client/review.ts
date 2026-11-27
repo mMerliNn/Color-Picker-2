@@ -26,6 +26,12 @@ export interface ReviewData {
   rounds: readonly ReviewRound[];
   /** The game's mode and settings: the title ("Classic · Rapid") and the line under it. */
   settings?: GameSettings;
+  /**
+   * A title of its own instead of the mode's name ("Weekly challenge · Week 48").
+   * The mode's name then opens the line under it, so a saved image still says
+   * which mode was played.
+   */
+  title?: string;
 }
 
 const LEGEND = 'Swatch: left = target, right = your pick';
@@ -56,6 +62,16 @@ export function modeTitle(s: GameSettings): string {
   const cat = categoryOf(s.mode);
   const variant = cat.variants.find((v) => v.mode === s.mode);
   return `${cat.label} · ${variant?.label ?? ''}`;
+}
+
+/** The review's title: its own (the weekly challenge), else the mode's name. */
+function headTitle(d: ReviewData & { settings: GameSettings }): string {
+  return d.title ?? modeTitle(d.settings);
+}
+
+/** The line under the title: the setup, after the mode's name when the title is not the mode. */
+function headSetup(d: ReviewData & { settings: GameSettings }): string {
+  return d.title ? `${modeTitle(d.settings)} · ${setupText(d.settings)}` : setupText(d.settings);
 }
 
 /** "5 rounds · 20 s per round · color shown 3 s" */
@@ -222,8 +238,9 @@ export function reviewSheet(d: ReviewData, onClose: () => void): HTMLElement {
   const gray = isGrayD(d);
   // With the mode known: "Your rounds" becomes a small heading over the mode's
   // name, with the game's setup under it.
-  const title = d.settings
-    ? h('div', { class: 'rv-heading' }, h('span', { class: 'rv-kicker' }, 'Your rounds'), h('h2', { id: 'rv-title' }, modeTitle(d.settings)))
+  const head = d.settings ? { ...d, settings: d.settings } : null;
+  const title = head
+    ? h('div', { class: 'rv-heading' }, h('span', { class: 'rv-kicker' }, 'Your rounds'), h('h2', { id: 'rv-title' }, headTitle(head)))
     : h('h2', { id: 'rv-title' }, 'Your rounds');
   const list = h('ol', { class: 'rv-list' }, ...d.rounds.map((r, i) => rowEl(r, i, rapid, gray)));
   // On a very narrow phone the verdicts ("· Good") are dropped rather than cut
@@ -239,7 +256,7 @@ export function reviewSheet(d: ReviewData, onClose: () => void): HTMLElement {
     'section',
     { class: 'card review' },
     h('div', { class: 'rv-head' }, title, closeBtn),
-    d.settings && h('p', { class: 'muted rv-setup' }, setupText(d.settings)),
+    head && h('p', { class: 'muted rv-setup' }, headSetup(head)),
     metaEl(d),
     tipEl(d),
     legendEl(gray),
@@ -388,10 +405,11 @@ function paint(ctx: CanvasRenderingContext2D, d: ReviewData, draw: boolean): num
   // the game, where nobody knows which mode was played).
   text('COLOR MATCH', PAD, y + 11, `700 10.5px ${FONT}`, C.accent);
   y += 14;
-  text(d.settings ? modeTitle(d.settings) : `Round review · ${d.rounds.length} rounds`, PAD, y + 22, `700 21px ${FONT}`, C.text);
+  const head = d.settings ? { ...d, settings: d.settings } : null;
+  text(head ? headTitle(head) : `Round review · ${d.rounds.length} rounds`, PAD, y + 22, `700 21px ${FONT}`, C.text);
   y += 30;
-  if (d.settings) {
-    text(setupText(d.settings), PAD, y + 14, `400 12.5px ${FONT}`, C.muted);
+  if (head) {
+    text(headSetup(head), PAD, y + 14, `400 12.5px ${FONT}`, C.muted);
     y += 19;
   }
   // Same rule as the sheet: if it does not fit, the whole date goes on its own line.
