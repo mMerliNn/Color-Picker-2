@@ -6,6 +6,7 @@ import {
   type ErrorCode,
   type ServerMessage,
 } from '../shared/protocol.js';
+import type { ChallengeService } from './challenge.js';
 import type { GameStore } from './db.js';
 import { DEFAULT_TIMING, Room, type Conn, type Player, type RoomTiming } from './room.js';
 
@@ -16,6 +17,8 @@ export interface GameServerOptions {
   emptyRoomTtlMs?: number;
   /** Any room is deleted after this much inactivity. */
   idleRoomTtlMs?: number;
+  /** The weekly challenge. Without it, 'challenge' messages are refused. */
+  challenges?: ChallengeService;
 }
 
 /** One per websocket connection. */
@@ -43,6 +46,9 @@ export class GameServer {
   private readonly maxRooms: number;
   private readonly emptyRoomTtlMs: number;
   private readonly idleRoomTtlMs: number;
+  private readonly challenges: ChallengeService | null;
+  /** Weekly challenge rooms by player (private client id), so a player can resume a running attempt. */
+  private readonly challengeRooms = new Map<string, Room>();
 
   constructor(
     private readonly store: GameStore,
@@ -52,6 +58,15 @@ export class GameServer {
     this.maxRooms = options.maxRooms ?? 500;
     this.emptyRoomTtlMs = options.emptyRoomTtlMs ?? 10 * 60_000;
     this.idleRoomTtlMs = options.idleRoomTtlMs ?? 3 * 60 * 60_000;
+    this.challenges = options.challenges ?? null;
+    if (this.challenges) this.challenges.isPlaying = (clientId) => this.runningChallenge(clientId) !== null;
+  }
+
+  /** A player's challenge attempt that is being played right now (countdown, a round or a result). */
+  private runningChallenge(clientId: string): Room | null {
+    const room = this.challengeRooms.get(clientId);
+    if (!room || this.rooms.get(room.code) !== room) return null;
+    return room.phase === 'starting' || room.phase === 'picking' || room.phase === 'reveal' ? room : null;
   }
 
   roomCount(): number {
@@ -104,6 +119,48 @@ export class GameServer {
         }
         session.room = room;
         session.player = result.player;
+        return;
+      }
+
+      case 'challenge': {
+        if (!this.challenges) {
+          this.error(session, 'bad_message', 'There is no weekly challenge on this server.');
+          return;
+        }
+        // Already playing it (another tab, or the tab was closed): take the seat back.
+        const running = this.runningChallenge(msg.clientId);
+        if (running) {
+          if (session.room && session.room !== running) this.leaveCurrent(session);
+          const result = running.join(msg.clientId, msg.name, session.conn);
+          if (result.ok) {
+            session.room = running;
+            session.player = result.player;
+          } else this.error(session, result.code, result.message);
+          return;
+        }
+        const ready = this.challenges.prepare(msg.clientId);
+        if (!ready.ok) {
+          this.error(session, ready.code, ready.message);
+          return;
+        }
+        if (this.rooms.size >= this.maxRooms) {
+          this.error(session, 'server_busy', 'The server is busy. Try again in a minute.');
+          return;
+        }
+        this.leaveCurrent(session);
+        const room = new Room(this.newCode(), ready.settings, this.store, this.timing, ready.hooks);
+        this.rooms.set(room.code, room);
+        this.challengeRooms.set(msg.clientId, room);
+        const result = room.join(msg.clientId, msg.name, session.conn);
+        if (!result.ok) {
+          this.error(session, result.code, result.message);
+          return;
+        }
+        session.room = room;
+        session.player = result.player;
+        // No lobby: the "get ready" countdown starts at once.
+        const failure = room.start(result.player);
+        if (failure) this.error(session, failure.code, failure.message);
         return;
       }
 
@@ -165,11 +222,15 @@ export class GameServer {
         this.rooms.delete(code);
       }
     }
+    for (const [clientId, room] of this.challengeRooms) {
+      if (this.rooms.get(room.code) !== room) this.challengeRooms.delete(clientId);
+    }
   }
 
   close(): void {
     for (const room of this.rooms.values()) room.dispose();
     this.rooms.clear();
+    this.challengeRooms.clear();
   }
 
   // ---- internals ----------------------------------------------------------

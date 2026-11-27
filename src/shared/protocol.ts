@@ -202,6 +202,9 @@ export interface RoundReview {
 export type ClientMessage =
   | { t: 'create'; clientId: string; name: string; settings?: Partial<GameSettings> }
   | { t: 'join'; clientId: string; name: string; code: string }
+  // Play this week's challenge: a solo room with fixed settings, started at
+  // once. Sent again while the attempt is running, it resumes it.
+  | { t: 'challenge'; clientId: string; name: string }
   | { t: 'settings'; settings: Partial<GameSettings> }
   | { t: 'start' }
   | { t: 'pick'; hex: string }
@@ -234,6 +237,9 @@ export type ServerMessage =
       phase: Phase;
       settings: GameSettings;
       players: PlayerInfo[];
+      // Set when this room is a weekly challenge attempt (no lobby, no "play
+      // again"). Optional: older servers do not send it.
+      challenge?: ChallengeInfo | null;
     }
   | { t: 'starting'; serverNow: number; startsAt: number }
   | {
@@ -282,6 +288,8 @@ export type ServerMessage =
       colors: string[];
       // This player's own rounds, in order (one per round). Never anyone else's.
       yourRounds: RoundReview[];
+      // Weekly challenge: this player's place this week, when the game ends.
+      challenge?: { rank: number; players: number } | null;
     }
   | { t: 'error'; code: ErrorCode; message: string };
 
@@ -296,7 +304,13 @@ export type ErrorCode =
   | 'wrong_phase'
   | 'solo_only'
   | 'rate_limited'
-  | 'server_busy';
+  | 'server_busy'
+  | 'already_played';
+
+export interface ChallengeInfo {
+  week: string; // "2026-W48"
+  number: number; // 48
+}
 
 // ---- validation (server side) -------------------------------------------
 
@@ -362,6 +376,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       const settings = cleanSettings(m.settings);
       if (!name || !isClientId(m.clientId) || settings === null) return null;
       return { t: 'create', clientId: m.clientId, name, settings };
+    }
+    case 'challenge': {
+      const name = cleanName(m.name);
+      if (!name || !isClientId(m.clientId)) return null;
+      return { t: 'challenge', clientId: m.clientId, name };
     }
     case 'join': {
       const name = cleanName(m.name);

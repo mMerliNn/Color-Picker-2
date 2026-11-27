@@ -1874,3 +1874,154 @@ body:has(.review-dialog[open]) {
     left: -13px;
   }
 }
+
+/* ---- weekly challenge ----------------------------------------------------- */
+
+.challenge-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.challenge-head h2 {
+  margin-bottom: 4px;
+}
+.challenge-week {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.challenge-meta {
+  margin-bottom: 4px;
+}
+.challenge-you {
+  font-weight: 600;
+  margin: 12px 0 0;
+}
+.btn.board-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+.challenge-kicker {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.challenge-final {
+  text-align: center;
+}
+.challenge-final .strip {
+  justify-content: center;
+}
+.challenge-score {
+  font-size: 1.1rem;
+  margin-bottom: 4px;
+}
+.challenge-score .num {
+  font-size: 2.6rem;
+  line-height: 1.1;
+}
+.challenge-rank {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 8px 0;
+}
+.winners {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.winners li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+.winners li.me {
+  background: var(--accent-soft);
+}
+.winners .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.winners .medal {
+  font-size: 1.2rem;
+}
+.leaderboard tr.gap td {
+  text-align: center;
+  color: var(--muted);
+  border-top: none;
+  padding: 2px;
+}
+.leaderboard .tag {
+  margin-left: 6px;
+}
+
+/* The week's colors on the leaderboard page: target and your pick side by
+   side, everyone's average error as a bar (longest = hardest). */
+.color-stats td {
+  vertical-align: middle;
+}
+.color-pair {
+  display: inline-flex;
+  width: 52px;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+.color-pair > span {
+  flex: 1;
+}
+.color-avg {
+  width: 100%;
+}
+.color-avg-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.color-bar {
+  flex: 1;
+  min-width: 32px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.color-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.tag.hard {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+}
+.color-avg-line .num {
+  min-width: 4ch;
+}
+.tag-slot {
+  flex: none;
+  width: 58px;
+}
+@media (max-width: 420px) {
+  .tag-slot {
+    display: none;
+  }
+}

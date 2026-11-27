@@ -8,6 +8,8 @@ a speed bonus and a shot clock. Scores are computed on the server from the CIEDE
 color difference, and every pick is stored in SQLite. Each player has a personal
 **history analysis page** for each game mode (`/stats`, `/stats/rapid`, `/stats/memory`, `/stats/memory-rapid`, `/stats/grayscale`, `/stats/grayscale-rapid`): error by hue, lightness/saturation bias, speed vs.
 accuracy, progress over time, and plain-language findings.
+A **weekly challenge** (Classic, 10 colors, one try, new every Monday in Tokyo) has a public
+leaderboard at `/challenge`.
 
 - **Client:** TypeScript + Vite, no framework (about 8 kB gzipped for the game, 5 kB more for the stats page), `vanilla-colorful` picker, hand-written SVG charts
 - **Server:** Node + `ws`, rooms in memory, built-in `node:sqlite` (no native modules to compile)
@@ -218,6 +220,79 @@ it never sends future colors, picks are hidden until the reveal) but this is a g
 and classrooms, not a tournament. Memory mode keeps the color out of the page once it hides and
 never resends it, but it was in the browser while it was shown, so the same applies.
 
+## Weekly challenge (`/challenge`)
+
+Everyone plays the **same 10 colors, alone, once a week**, and the results go on a public
+leaderboard. A card on the home screen says "Weekly challenge · Week 48 · Ends in 2 days · 85
+players" with a **Play** button (it uses the name typed above it).
+
+- **Weeks run Monday 00:00 to Monday 00:00, Tokyo time** (UTC+9, no daylight saving), numbered
+  like ISO weeks of the Tokyo date (`2026-W48`). `challengeWeek()` in `src/shared/challenge.ts`.
+- **One try per player (browser) per week.** It counts from the moment the first color appears:
+  quitting during the "get ready" countdown uses nothing up. Quitting later keeps the points so far
+  (the entry is updated after every round), and the quit dialog says so before you confirm. Closing
+  the tab does not stop the clock: the rounds run out on the server, and the home card offers
+  **Resume** while the game is still going. Another browser is another player; that is accepted.
+- **The game** is an ordinary solo room with fixed settings, started at once (no lobby, no room
+  code to share, nobody else can join, no "Play again"). It is logged like any game (with
+  `games.challenge_week` set), so it also counts on the player's stats page.
+- **Afterwards:** your points, "#12 of 85 this week", and a link to the leaderboard: the top 30
+  with average ΔE and total time (ties on points go to the faster total time), and **your own row
+  always**, below a gap when you are further down. A try that stopped early shows "4/10" instead
+  of a time. **Only players who have played this week can open it**; others are sent to play first.
+- **The week's colors** are on the leaderboard page too, in round order: each one beside your own
+  pick, with everyone's average error on it (ΔE, or "off by" in the grayscale modes) as a bar and a
+  number, your own error, and the hardest and easiest named ("Hardest: round 5, ΔE 14.2 on
+  average"). Averages count answers only (misses are listed in the tooltip) and leave out bots.
+- **Last week's top 3** show on the home card (and the leaderboard page) for the first 3 days of a
+  new week (`LAST_WEEK_VISIBLE_MS`).
+
+**What is played** is decided by `challengeConfig()` in `src/shared/challenge.ts`: 10 rounds of
+Classic, 30 seconds each, every week. Any mode works there (a challenge is just a solo game with
+its colors chosen in advance), so switching to Memory, or rotating modes by week number, is a
+change to that one function. Each week's settings are stored with its colors when the week is first
+played, so changing the schedule or the generator never changes a week already under way.
+
+**Colors nobody can predict.** Each week's seed is `HMAC-SHA256(secret, week + mode)`. The open
+code shows how colors are made from a seed, but without the secret nobody can work out next
+week's seed. The secret is `CHALLENGE_SECRET`, or, when that is not set, a random key made once and
+kept in the database (`meta` table), which keeps working across restarts. Set
+`CHALLENGE_SECRET` if you ever want to move servers without copying the database. The server only
+ever sends a round's color when that round starts, as in every other game.
+
+**Leaning toward hard colors.** Every color still gets its own hue sector (so the whole wheel is
+covered) and, new here, its own lightness band (so a week is never all dark). Inside those, 16
+candidates are drawn and one is chosen with a chance proportional to difficulty⁶
+(`CHALLENGE_SHARPNESS`): hard colors come up much more often, but every week still looks
+different. Difficulty (`src/server/difficulty.ts`) is a blend of two things:
+- **A prior from color science** (`PRIOR_DIFFICULTY` in `colors.ts`), used until there is data:
+  muted colors (the picker's low-saturation edge is a thin strip, and people reliably pick them too
+  vivid), dark colors (the picker crams them into a few pixels, and screens differ most in the
+  shadows), and browns and olives (no name of their own on the hue slider). With the prior alone,
+  about 45% of challenge colors are muted, against 30% in normal games, and 6% are vivid instead of 16%.
+- **What players actually get wrong**, from the pick log of the challenge's mode: color space is
+  split into 12 hues × 3 lightness × 3 saturation cells, and each pick's ΔE is divided by that
+  player's own average, so a cell does not look hard just because beginners happened to get it.
+  A cell's measurement counts as much as the prior at 40 picks and dominates beyond that. Players
+  with fewer than 10 answered rounds and bots are left out. `challenges.difficulty_samples` records
+  how much data each week's choice was based on.
+
+**Names are not filtered.** Players appear under the name they typed. If one needs to go, **hide it
+by hand**: the row then reads "Anonymous player" to everyone but its owner (set `name_hidden` back
+to 0 to undo).
+
+```bash
+sudo sqlite3 /var/lib/colormatch/colormatch.db \
+  "UPDATE challenge_entries SET name_hidden = 1 WHERE week = '2026-W48' AND name = 'Bad Name'"
+```
+
+The API: `POST /api/challenge` (the home card: week, player count, your place, last week's top 3)
+and `POST /api/challenge/leaderboard` (the top 30, your row and the week's colors with everyone's
+average error; 403 `not_played` until you have played), both with
+`{ clientId }` in the body like the stats API, on a separate, larger rate limit because every visit
+to the home page asks for the card. The top 30 and the count are cached for 5 seconds.
+"Delete my history" on the stats page also removes the player's challenge entries.
+
 ## Stored data
 
 `data/colormatch.db` (override with `DB_FILE`). `client_id` is the player's anonymous private id;
@@ -225,10 +300,17 @@ it is never sent to other players.
 
 ```
 games(id, room_code, seed, rounds, round_seconds, mode, memorize_seconds, shot_seconds,
-      player_count, started_at, ended_at)
+      challenge_week, player_count, started_at, ended_at)
 picks(id, game_id, round, client_id, player_name, target_hex, pick_hex, delta_e, score, time_ms,
       target_l, target_c, target_h, pick_l, pick_c, pick_h, created_at)
+challenges(week, mode, rounds, round_seconds, memorize_seconds, seed, colors, difficulty_samples,
+           created_at)
+challenge_entries(week, client_id, name, game_id, score, total_time_ms, rounds_played,
+                  avg_delta_e, started_at, finished_at, name_hidden)
+meta(key, value)
 ```
+
+The weekly challenge tables came in schema version 4 (see "Weekly challenge" above).
 
 `*_l/c/h` are CIE LCH values (hue is NULL for near-grays). Missed rounds have `pick_hex = NULL`.
 `mode` is `classic`, `rapid`, `memory`, `memory-rapid`, `grayscale` or `grayscale-rapid`
@@ -323,6 +405,7 @@ for your sudo password because the database folder is root-only.
 | `DB_FILE` | `data/colormatch.db` | SQLite file |
 | `STATIC_DIR` | `dist/client` | Built client |
 | `ALLOWED_ORIGINS` | *(empty = any)* | Comma-separated websocket origins, e.g. `https://colorpick.fun` |
+| `CHALLENGE_SECRET` | *(a key kept in the database)* | Secret key for the weekly challenge's seeds |
 
 ## Deploy on a Vultr VPS (Ubuntu LTS)
 
@@ -380,9 +463,10 @@ and each connection is rate limited.
 ## Project layout
 
 ```
-src/shared/    protocol.ts (messages + validation), colors.ts (seeded colors, ΔE, scoring), review.ts (round review: HSV bars, tip), labels.ts, stats.ts (stats types)
-src/server/    room.ts (game state machine), game-server.ts (rooms, rate limits), db.ts, stats.ts (analysis), app.ts (http, ws, /api)
-src/client/    main.ts + views.ts (the game), review.ts (review sheet + saved image), stats.ts + charts.ts (the stats page), identity.ts, net.ts, dom.ts, styles.css
+src/shared/    protocol.ts (messages + validation), colors.ts (seeded colors, ΔE, scoring), review.ts (round review: HSV bars, tip), labels.ts, stats.ts (stats types), challenge.ts (weeks, schedule, leaderboard types)
+src/server/    room.ts (game state machine), game-server.ts (rooms, rate limits), db.ts, stats.ts (analysis), app.ts (http, ws, /api),
+               challenge.ts (weekly challenge), difficulty.ts (which colors are hard)
+src/client/    main.ts + views.ts (the game), review.ts (review sheet + saved image), stats.ts + charts.ts (the stats page), challenge.ts (the leaderboard page), identity.ts, net.ts, dom.ts, styles.css
                mockup-review.* (dev-only preview of the review with sample data)
 test/          unit tests (fake clock), stats tests, API tests, and a real-websocket 30-player game
 scripts/       simulate.ts (bots), seed-demo.ts (fake history for the stats page)
@@ -391,6 +475,6 @@ deploy/        Caddyfile, systemd unit, deploy.sh
 
 ## Ideas not built yet
 
-Daily challenge (a date-based seed), more modes (odd one out, gradient), accounts so history survives clearing browser
+More modes (odd one out, gradient), accounts so history survives clearing browser
 data (and so a stolen id cannot read someone's page), spectator view, per-hue lightness/hue-drift
 charts on the stats page (the numbers are already in the table view).

@@ -25,6 +25,7 @@ import { clear, h, setText, swatch } from './dom.js';
 import { profileQuery } from './identity.js';
 import { openReview, pickTime } from './review.js';
 import { statsPath } from '../shared/stats.js';
+import { timeLeft, type ChallengeStatus } from '../shared/challenge.js';
 
 const NEUTRAL = '#808080';
 
@@ -99,7 +100,7 @@ export function homeView(ctx: Ctx): View {
     if (e.key === 'Enter') (codeInput.value.trim() ? doJoin : doCreate)();
   });
 
-  const el = h(
+  const home = h(
     'section',
     { class: 'card home' },
     h('h1', null, 'Color Match'),
@@ -115,6 +116,8 @@ export function homeView(ctx: Ctx): View {
     h('div', { class: 'row' }, codeInput, joinBtn),
     h('a', { class: 'btn link', href: `/stats${profileQuery()}` }, 'See my stats'),
   );
+  const challenge = challengeCard(ctx, needName);
+  const el = h('div', null, home, challenge.el);
 
   const view: View = {
     el,
@@ -122,12 +125,105 @@ export function homeView(ctx: Ctx): View {
       const busy = ctx.model.busy;
       createBtn.disabled = busy;
       joinBtn.disabled = busy;
+      challenge.setBusy(busy);
     },
   };
   view.update?.();
   // Focus the first thing still missing.
   queueMicrotask(() => (ctx.model.name ? (ctx.model.prefillCode ? joinBtn : createBtn) : nameInput).focus());
   return view;
+}
+
+// ---------------------------------------------------------------------------
+// Home: the weekly challenge card
+// ---------------------------------------------------------------------------
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function playersText(n: number): string {
+  return n === 0 ? 'no players yet' : n === 1 ? '1 player' : `${n} players`;
+}
+
+/**
+ * "Weekly challenge · Week 48 · ends in 3 days · 85 players" with a Play
+ * button, or your place once you have played (and a Resume button while your
+ * attempt is still running in another tab). Last week's top 3 show during the
+ * first days of a new week. The numbers come from /api/challenge.
+ */
+function challengeCard(ctx: Ctx, needName: () => string | null): { el: HTMLElement; setBusy(busy: boolean): void } {
+  const week = h('span', { class: 'challenge-week' });
+  const meta = h('p', { class: 'muted challenge-meta' }, 'Loading…');
+  const rules = h('p', { class: 'muted fine' });
+  const you = h('p', { class: 'challenge-you', hidden: true });
+  const playBtn = h('button', { class: 'btn primary big', type: 'button', hidden: true }, 'Play');
+  const boardLink = h('a', { class: 'btn big board-link', href: `/challenge${profileQuery()}`, hidden: true }, 'See the leaderboard');
+  const winners = h('div', { class: 'challenge-winners', hidden: true });
+  playBtn.addEventListener('click', () => {
+    const name = needName();
+    if (name) ctx.actions.challenge(name);
+  });
+
+  const show = (st: ChallengeStatus | null) => {
+    if (!st) {
+      setText(meta, 'The weekly challenge is not available right now.');
+      return;
+    }
+    const w = st.week;
+    setText(week, `Week ${w.number}`);
+    setText(meta, `Ends in ${timeLeft(w.endsAt - st.serverNow)} · ${playersText(w.players)}`);
+    setText(rules, `${w.rounds} colors, ${w.roundSeconds} s each. One try: it counts from the moment the first color appears.`);
+    const me = st.you;
+    playBtn.hidden = me !== null && !me.inProgress;
+    setText(playBtn, me?.inProgress ? 'Resume' : 'Play');
+    boardLink.hidden = me === null;
+    boardLink.classList.toggle('primary', me !== null && !me.inProgress);
+    you.hidden = me === null;
+    if (me) {
+      const place = `#${me.rank} of ${w.players}`;
+      if (me.inProgress) setText(you, `You’re playing: ${me.rounds} of ${w.rounds} rounds so far.`);
+      else if (me.finished) setText(you, `You: ${place} · ${me.score} points`);
+      else setText(you, `You: ${place} · ${me.score} points (stopped after ${me.rounds} of ${w.rounds} rounds)`);
+    }
+    winners.hidden = !st.lastWeek;
+    if (st.lastWeek) {
+      winners.replaceChildren(
+        h('h3', null, `Last week’s winners · Week ${st.lastWeek.number}`),
+        h(
+          'ol',
+          { class: 'winners' },
+          ...st.lastWeek.top.map((r) =>
+            h(
+              'li',
+              { class: r.you ? 'me' : '' },
+              h('span', { class: 'medal', 'aria-hidden': 'true' }, MEDALS[r.rank - 1] ?? ''),
+              h('span', { class: 'name' }, r.name),
+              h('span', { class: 'num' }, `${r.score}`),
+              h('span', { class: 'sr-only' }, `place ${r.rank}, ${r.score} points`),
+            ),
+          ),
+        ),
+      );
+    }
+  };
+  void ctx.actions.challengeStatus().then(show);
+
+  const el = h(
+    'section',
+    { class: 'card challenge-card', 'aria-labelledby': 'challenge-title' },
+    h('div', { class: 'challenge-head' }, h('h2', { id: 'challenge-title' }, 'Weekly challenge'), week),
+    meta,
+    rules,
+    you,
+    playBtn,
+    boardLink,
+    winners,
+  );
+  return {
+    el,
+    setBusy(busy) {
+      playBtn.disabled = busy;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -421,9 +517,11 @@ function grayVerdict(pick: string, target: string): string {
 
 export function countdownView(ctx: Ctx): View {
   const number = h('div', { class: 'big-number', 'aria-hidden': 'true' }, '3');
+  const challenge = ctx.model.room?.challenge;
   const el = h(
     'section',
     { class: 'card center' },
+    challenge && h('p', { class: 'muted challenge-kicker' }, `Weekly challenge · Week ${challenge.number}`),
     h('h2', null, 'Get ready!'),
     number,
     h('p', { class: 'muted' }, 'The first color appears when the countdown ends.'),
@@ -956,9 +1054,14 @@ function quitLink(ctx: Ctx): HTMLElement {
       h(
         'p',
         { class: 'muted' },
-        others === 0
-          ? 'The game ends here and you go back to the start screen.'
-          : 'You’ll leave the room and go back to the start screen. The others keep playing without you.',
+        // A challenge counts from the first color: quitting uses up this week's try.
+        room?.challenge && ctx.model.round
+          ? 'Your points so far count, and this week’s try is used up. You can’t play this week’s challenge again.'
+          : room?.challenge
+            ? 'Nothing has counted yet: you can still play this week’s challenge later.'
+            : others === 0
+              ? 'The game ends here and you go back to the start screen.'
+              : 'You’ll leave the room and go back to the start screen. The others keep playing without you.',
       ),
       h('div', { class: 'quit-actions' }, no, yes),
     );
@@ -1027,6 +1130,38 @@ export function finalView(ctx: Ctx): View {
   const reviewBtn = review && h('button', { class: 'btn big', type: 'button' }, 'Review my rounds');
   reviewBtn?.addEventListener('click', () => review?.());
 
+  const statsLink = h('a', { class: 'btn link', href: `${statsPath(room.settings.mode)}${profileQuery()}` }, 'See my stats');
+
+  // Weekly challenge: your points and your place this week, then the leaderboard.
+  if (room.challenge) {
+    const place = fin.challenge ?? null;
+    const home = h('button', { class: 'btn link', type: 'button' }, 'Back to the start');
+    home.addEventListener('click', () => ctx.actions.leave());
+    const avg = me?.avgDeltaE ?? null;
+    const el = h(
+      'section',
+      { class: 'card final challenge-final' },
+      h('p', { class: 'muted challenge-kicker' }, `Weekly challenge · Week ${room.challenge.number}`),
+      h('h2', null, 'Your result'),
+      h('p', { class: 'challenge-score' }, h('span', { class: 'num' }, me?.total ?? 0), ' points'),
+      place && h('p', { class: 'challenge-rank' }, `#${place.rank} of ${place.players} this week`),
+      h(
+        'p',
+        { class: 'muted center' },
+        [avg === null ? null : `Avg ${isGrayMode(room.settings.mode) ? 'off by' : 'ΔE'} ${avg.toFixed(1)}`, me?.avgTimeMs ? `avg time ${pickTime(me.avgTimeMs)}` : null]
+          .filter(Boolean)
+          .join(' · '),
+      ),
+      h('a', { class: 'btn primary big board-link', href: `/challenge${profileQuery()}` }, 'See the leaderboard'),
+      h('h3', null, 'The colors'),
+      strip,
+      reviewBtn,
+      statsLink,
+      home,
+    );
+    return { el };
+  }
+
   const againBtn = h('button', { class: 'btn primary big', type: 'button' }, 'Play again');
   againBtn.addEventListener('click', () => ctx.actions.again());
   const leaveBtn = h('button', { class: 'btn link', type: 'button' }, 'Leave room');
@@ -1043,7 +1178,7 @@ export function finalView(ctx: Ctx): View {
     reviewBtn,
     isHost ? againBtn : h('p', { class: 'muted center' }, 'Waiting for the host to start another game…'),
     // Straight to the analysis page of the mode just played.
-    h('a', { class: 'btn link', href: `${statsPath(room.settings.mode)}${profileQuery()}` }, 'See my stats'),
+    statsLink,
     leaveBtn,
   );
   return { el };

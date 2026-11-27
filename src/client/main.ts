@@ -1,4 +1,5 @@
 ﻿import './styles.css';
+import type { ChallengeStatus } from '../shared/challenge.js';
 import type { ServerMessage } from '../shared/protocol.js';
 import type { Actions, Ctx, Model, View } from './ctx.js';
 import { h } from './dom.js';
@@ -127,6 +128,11 @@ function handleMessage(msg: ServerMessage): void {
   switch (msg.t) {
     case 'state':
       model.busy = false;
+      // A challenge attempt that was stopped before it began (it is never a lobby): back to the start.
+      if (msg.challenge && msg.phase === 'lobby') {
+        actions.leave();
+        return;
+      }
       model.room = {
         code: msg.code,
         youId: msg.youId,
@@ -134,6 +140,7 @@ function handleMessage(msg: ServerMessage): void {
         phase: msg.phase,
         settings: msg.settings,
         players: msg.players,
+        challenge: msg.challenge ?? null,
       };
       if (msg.phase === 'lobby') {
         model.round = null;
@@ -197,7 +204,7 @@ function handleMessage(msg: ServerMessage): void {
 
     case 'error':
       model.busy = false;
-      if (!model.room && (msg.code === 'no_room' || msg.code === 'in_progress' || msg.code === 'room_full')) {
+      if (!model.room && (msg.code === 'no_room' || msg.code === 'in_progress' || msg.code === 'room_full' || msg.code === 'already_played')) {
         writeStore(session, 'room', null); // a failed auto-resume must not retry forever
       }
       notify(msg.message);
@@ -220,6 +227,24 @@ const actions: Actions = {
     writeStore(local, 'name', name);
     model.busy = send({ t: 'join', clientId, name, code });
     render();
+  },
+  challenge(name) {
+    model.name = name;
+    writeStore(local, 'name', name);
+    model.busy = send({ t: 'challenge', clientId, name });
+    render();
+  },
+  async challengeStatus() {
+    try {
+      const res = await fetch('/api/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      });
+      return res.ok ? ((await res.json()) as ChallengeStatus) : null;
+    } catch {
+      return null;
+    }
   },
   start: () => void send({ t: 'start' }),
   setSettings: (settings) => void send({ t: 'settings', settings }),
@@ -284,7 +309,11 @@ function render(): void {
   } else {
     current?.update?.();
   }
-  document.title = model.room ? `Color Match · ${model.room.code}` : 'Color Match';
+  document.title = model.room?.challenge
+    ? `Color Match · Weekly challenge (beta ver.)`
+    : model.room
+      ? `Color Match · ${model.room.code}`
+      : 'Color Match';
   renderBanner();
 }
 

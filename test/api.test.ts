@@ -53,6 +53,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'colormatch-api-'));
   writeFileSync(join(dir, 'index.html'), '<title>game</title>');
   writeFileSync(join(dir, 'stats.html'), '<title>stats page</title>');
+  writeFileSync(join(dir, 'challenge.html'), '<title>challenge page</title>');
   mkdirSync(join(dir, 'assets'));
   app = await startApp({ port: 0, host: '127.0.0.1', dbFile: ':memory:', staticDir: dir, allowedOrigins: [], statsCacheMs: 0 });
   base = `http://127.0.0.1:${app.port}`;
@@ -178,5 +179,33 @@ describe('rate limiting', () => {
     const statuses = await Promise.all(Array.from({ length: 60 }, () => post('/api/stats', { clientId: ALICE }).then((r) => r.status)));
     expect(statuses).toContain(429);
     expect(statuses).toContain(200);
+  });
+});
+
+describe('weekly challenge API', () => {
+  it('gives anyone the home card numbers, without a place before playing', async () => {
+    const res = await post('/api/challenge', { clientId: ALICE });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { week: { id: string; rounds: number; roundSeconds: number; mode: string }; you: unknown };
+    expect(body.week).toMatchObject({ rounds: 10, roundSeconds: 30, mode: 'classic' });
+    expect(body.week.id).toMatch(/^\d{4}-W\d{2}$/);
+    expect(body.you).toBeNull();
+  });
+
+  it('keeps the leaderboard for players who have played this week', async () => {
+    const res = await post('/api/challenge/leaderboard', { clientId: BOB });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'not_played' });
+  });
+
+  it('refuses a missing or malformed id', async () => {
+    expect((await post('/api/challenge', {})).status).toBe(400);
+    expect((await post('/api/challenge/leaderboard', { clientId: 'x' })).status).toBe(400);
+  });
+
+  it('serves the leaderboard page at /challenge', async () => {
+    const res = await fetch(`${base}/challenge`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('challenge page');
   });
 });

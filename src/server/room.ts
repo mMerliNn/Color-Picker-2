@@ -69,6 +69,23 @@ export interface Player {
   purgeTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/**
+ * Weekly challenge: what makes a room a challenge attempt. The room plays it
+ * like a solo game, with these colors, and reports the score as it goes.
+ */
+export interface ChallengeHooks {
+  week: string; // "2026-W48"
+  number: number;
+  seed: number;
+  colors: string[];
+  /** The first color appears: the attempt counts from now. False when this player already has one this week. */
+  begin(p: { clientId: string; name: string; gameId: string; startedAt: number }): boolean;
+  /** The totals so far, after every round; `finishedAt` after the last one. */
+  update(p: { clientId: string; gameId: string; score: number; totalTimeMs: number; rounds: number; avgDeltaE: number | null; finishedAt: number | null }): void;
+  /** This player's place this week. */
+  standing(clientId: string): { rank: number; players: number } | null;
+}
+
 export type JoinResult =
   | { ok: true; player: Player }
   | { ok: false; code: ErrorCode; message: string };
@@ -110,6 +127,8 @@ export class Room {
     settings: Partial<GameSettings>,
     private readonly store: GameStore,
     private readonly timing: RoomTiming = DEFAULT_TIMING,
+    /** Set when this room is a weekly challenge attempt (one player, fixed settings, started at once). */
+    readonly challenge: ChallengeHooks | null = null,
   ) {
     this.code = code;
     this.settings = fitSettings({ ...DEFAULT_SETTINGS, ...settings });
@@ -162,6 +181,10 @@ export class Room {
       return { ok: true, player: existing };
     }
 
+    // A challenge room is its one player's own: nobody else can join it.
+    if (this.challenge && this.players.size > 0) {
+      return { ok: false, code: 'no_room', message: 'No room with that code.' };
+    }
     if (this.phase !== 'lobby') {
       return { ok: false, code: 'in_progress', message: 'That game has already started.' };
     }
@@ -187,7 +210,10 @@ export class Room {
     this.byClient.set(clientId, player);
     this.ensureHost();
     this.enforceSoloRule();
-    this.broadcastState();
+    // A challenge room has no lobby: it starts right after this join, and that
+    // sends the state. (To a player, a challenge room in the lobby phase means
+    // the attempt was stopped.)
+    if (!this.challenge) this.broadcastState();
     return { ok: true, player };
   }
 
@@ -278,6 +304,7 @@ export class Room {
   setSettings(player: Player, patch: Partial<GameSettings>): ErrorResult | null {
     if (player.id !== this.hostId) return err('not_host', 'Only the host can change settings.');
     if (this.phase !== 'lobby') return err('wrong_phase', 'Settings are locked once the game starts.');
+    if (this.challenge) return err('wrong_phase', 'The weekly challenge has fixed settings.');
     if (patch.roundSeconds === UNLIMITED_SECONDS && this.connectedCount() > 1) {
       return err('solo_only', 'Unlimited time is only for solo games. Pick a time limit instead.');
     }
@@ -296,8 +323,11 @@ export class Room {
     }
     this.touch();
 
-    const seed = randomInt(0, 2 ** 32);
-    this.colors = (isGrayMode(this.settings.mode) ? generateGrays : generateColors)(seed, this.settings.rounds);
+    // A challenge's colors were chosen for the whole week in advance.
+    const seed = this.challenge?.seed ?? randomInt(0, 2 ** 32);
+    this.colors = this.challenge
+      ? [...this.challenge.colors]
+      : (isGrayMode(this.settings.mode) ? generateGrays : generateColors)(seed, this.settings.rounds);
     this.gameId = randomUUID();
     for (const p of this.players.values()) {
       p.total = 0;
@@ -320,6 +350,7 @@ export class Room {
         roundSeconds: this.settings.roundSeconds,
         mode: this.settings.mode,
         memorizeSeconds: isMemoryMode(this.settings.mode) ? this.settings.memorizeSeconds : null,
+        challengeWeek: this.challenge?.week ?? null,
         playerCount: this.players.size,
         startedAt: Date.now(),
       });
@@ -341,6 +372,7 @@ export class Room {
   again(player: Player): ErrorResult | null {
     if (player.id !== this.hostId) return err('not_host', 'Only the host can start a new game.');
     if (this.phase !== 'final') return err('wrong_phase', 'The current game is not finished.');
+    if (this.challenge) return err('wrong_phase', 'The weekly challenge is played once a week.');
     this.touch();
     for (const p of [...this.players.values()]) {
       if (!p.conn) this.dropSilently(p);
@@ -439,6 +471,8 @@ export class Room {
 
   private beginRound(index: number): void {
     const now = Date.now();
+    // Weekly challenge: the attempt counts from the moment the first color appears.
+    if (index === 0 && this.challenge && !this.beginChallenge(now)) return;
     this.phase = 'picking';
     this.roundIndex = index;
     this.afterReveal = null;
@@ -463,6 +497,30 @@ export class Room {
     } else {
       this.schedule(this.roundEndsAt - now + this.timing.graceMs, () => this.closeRound());
     }
+  }
+
+  /**
+   * Record the start of the challenge attempt. Should this player already have
+   * one this week (another tab got there first), the game stops before any
+   * color is shown.
+   */
+  private beginChallenge(now: number): boolean {
+    const challenge = this.challenge as ChallengeHooks;
+    for (const p of this.players.values()) {
+      let ok = false;
+      try {
+        ok = challenge.begin({ clientId: p.clientId, name: p.name, gameId: this.gameId as string, startedAt: now });
+      } catch (e) {
+        console.error('failed to record challenge start', e);
+      }
+      if (!ok) {
+        this.each(() => ({ t: 'error', code: 'already_played', message: 'You’ve already played this week’s challenge.' }));
+        this.abandon();
+        this.broadcastState();
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Solo only: skip the rest of the pause after a round result. */
@@ -551,13 +609,31 @@ export class Room {
     } catch (e) {
       console.error('failed to log round', e);
     }
+    const isLast = index >= this.settings.rounds - 1;
+    // Weekly challenge: the totals after every round, so quitting midway keeps the points so far.
+    if (this.challenge) {
+      for (const p of this.players.values()) {
+        try {
+          this.challenge.update({
+            clientId: p.clientId,
+            gameId: this.gameId as string,
+            score: p.total,
+            totalTimeMs: p.totalTimeMs,
+            rounds: index + 1,
+            avgDeltaE: p.deltaEs.length ? p.deltaEs.reduce((a, b) => a + b, 0) / p.deltaEs.length : null,
+            finishedAt: isLast ? now : null,
+          });
+        } catch (e) {
+          console.error('failed to record challenge round', e);
+        }
+      }
+    }
 
     results.sort(
       (a, b) =>
         b.score - a.score || (a.timeMs ?? Infinity) - (b.timeMs ?? Infinity) || a.name.localeCompare(b.name),
     );
 
-    const isLast = index >= this.settings.rounds - 1;
     this.lastReveal = {
       t: 'reveal',
       serverNow: now,
@@ -589,8 +665,18 @@ export class Room {
       console.error('failed to log game end', e);
     }
     this.lastFinal = { t: 'final', serverNow: Date.now(), standings: this.standings(), colors: this.colors };
-    const final = this.lastFinal;
-    this.each((p) => ({ ...final, yourRounds: p.rounds }));
+    this.each((p) => this.finalMessage(p));
+  }
+
+  /** The final results for one player: their own rounds, and in a challenge their place this week. */
+  private finalMessage(p: Player): ServerMessage {
+    let challenge: { rank: number; players: number } | null = null;
+    try {
+      challenge = this.challenge?.standing(p.clientId) ?? null;
+    } catch (e) {
+      console.error('failed to read challenge standing', e);
+    }
+    return { ...(this.lastFinal as FinalMessage), serverNow: Date.now(), yourRounds: p.rounds, challenge };
   }
 
   // ---- views --------------------------------------------------------------
@@ -637,6 +723,7 @@ export class Room {
       phase: this.phase,
       settings: this.settings,
       players,
+      challenge: this.challenge ? { week: this.challenge.week, number: this.challenge.number } : null,
     };
   }
 
@@ -674,7 +761,7 @@ export class Room {
         if (this.lastReveal) this.sendTo(p, { ...this.lastReveal, serverNow: Date.now() });
         break;
       case 'final':
-        if (this.lastFinal) this.sendTo(p, { ...this.lastFinal, serverNow: Date.now(), yourRounds: p.rounds });
+        if (this.lastFinal) this.sendTo(p, this.finalMessage(p));
         break;
       default:
         break;

@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { isClientId, isGameMode, type ServerMessage } from '../shared/protocol.js';
 import { DEFAULT_STATS_MODE, statsModeFromPath } from '../shared/stats.js';
+import { ChallengeService, type ChallengeServiceOptions } from './challenge.js';
 import { GameStore } from './db.js';
 import { GameServer, type GameServerOptions } from './game-server.js';
 import type { Conn } from './room.js';
@@ -19,6 +20,8 @@ export interface AppOptions {
   game?: GameServerOptions;
   /** How long the "everyone" comparison numbers are cached (default 60 s). */
   statsCacheMs?: number;
+  /** Weekly challenge options (secret key, name filter, clock); defaults come from the environment. */
+  challenge?: ChallengeServiceOptions;
 }
 
 export interface App {
@@ -26,6 +29,7 @@ export interface App {
   game: GameServer;
   store: GameStore;
   stats: StatsService;
+  challenges: ChallengeService;
   port: number;
   close(): Promise<void>;
 }
@@ -71,6 +75,22 @@ function apiAllowed(): boolean {
   return true;
 }
 
+// The weekly challenge card is fetched by every visit to the home page, so it
+// gets its own, larger bucket (its answers are cheap: the board is cached).
+let challengeTokens = 100;
+let challengeLast = Date.now();
+
+function challengeApiAllowed(): boolean {
+  const now = Date.now();
+  challengeTokens = Math.min(100, challengeTokens + ((now - challengeLast) / 1000) * 50); // burst 100, 50 per second
+  challengeLast = now;
+  if (challengeTokens < 1) return false;
+  challengeTokens -= 1;
+  return true;
+}
+
+const CHALLENGE_PATHS = new Set(['/api/challenge', '/api/challenge/leaderboard']);
+
 function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolve) => {
     let size = 0;
@@ -94,6 +114,7 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 
 async function handleApi(
   stats: StatsService,
+  challenges: ChallengeService,
   pathname: string,
   req: IncomingMessage,
   res: ServerResponse,
@@ -108,7 +129,8 @@ async function handleApi(
     res.end(JSON.stringify(body));
   };
 
-  if (pathname !== '/api/stats' && pathname !== '/api/delete') {
+  const challenge = CHALLENGE_PATHS.has(pathname);
+  if (pathname !== '/api/stats' && pathname !== '/api/delete' && !challenge) {
     json(404, { error: 'not_found' });
     return;
   }
@@ -116,7 +138,7 @@ async function handleApi(
     json(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
     return;
   }
-  if (!apiAllowed()) {
+  if (!(challenge ? challengeApiAllowed() : apiAllowed())) {
     json(429, { error: 'rate_limited' }, { 'Retry-After': '1' });
     return;
   }
@@ -131,6 +153,22 @@ async function handleApi(
     ({ clientId, mode } = JSON.parse(raw) as { clientId?: unknown; mode?: unknown });
   } catch {
     json(400, { error: 'bad_request' });
+    return;
+  }
+  // Weekly challenge: the home card (public numbers plus your own place), and
+  // the leaderboard, which only players who have played this week may see.
+  if (challenge) {
+    if (!isClientId(clientId)) {
+      json(400, { error: 'bad_request' });
+      return;
+    }
+    if (pathname === '/api/challenge') {
+      json(200, challenges.status(clientId));
+      return;
+    }
+    const board = challenges.leaderboard(clientId);
+    if (board) json(200, board);
+    else json(403, { error: 'not_played' });
     return;
   }
   // `mode` picks the game mode's analysis page; leaving it out means the default page.
@@ -177,6 +215,8 @@ async function serveStatic(root: string, req: IncomingMessage, res: ServerRespon
   // page reads the mode from the address. An unknown mode is treated like any
   // unknown address (the game page below).
   if (statsModeFromPath(pathname)) pathname = '/stats.html';
+  // The weekly challenge's leaderboard is its own page too.
+  if (pathname === '/challenge' || pathname === '/challenge/') pathname = '/challenge.html';
 
   // Resolve inside the static root only (blocks ../ traversal).
   let file = resolve(join(root, normalize(pathname)));
@@ -213,13 +253,14 @@ async function serveStatic(root: string, req: IncomingMessage, res: ServerRespon
 export async function startApp(options: AppOptions): Promise<App> {
   const staticRoot = resolve(options.staticDir);
   const store = new GameStore(options.dbFile);
-  const game = new GameServer(store, options.game);
+  const challenges = new ChallengeService(store, options.challenge);
+  const game = new GameServer(store, { challenges, ...options.game });
   const stats = new StatsService(store, options.statsCacheMs);
 
   const server = createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
     const handler = pathname.startsWith('/api/')
-      ? handleApi(stats, pathname, req, res)
+      ? handleApi(stats, challenges, pathname, req, res)
       : serveStatic(staticRoot, req, res);
     handler.catch((e) => {
       console.error('request error', e);
@@ -297,6 +338,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     game,
     store,
     stats,
+    challenges,
     port,
     async close() {
       clearInterval(sweeper);

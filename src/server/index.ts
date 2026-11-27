@@ -12,6 +12,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
 
 const app = await startApp({ port, host, dbFile, staticDir, allowedOrigins });
 console.log(`colormatch listening on http://${host}:${app.port} (db: ${dbFile}, static: ${staticDir})`);
+if (!process.env.CHALLENGE_SECRET) {
+  console.log('CHALLENGE_SECRET is not set: the weekly challenge uses the secret key kept in the database.');
+}
 if (allowedOrigins.length === 0) {
   console.log('ALLOWED_ORIGINS is empty: websocket connections are accepted from any origin.');
 }

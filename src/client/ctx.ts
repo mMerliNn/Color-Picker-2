@@ -1,4 +1,6 @@
+import type { ChallengeStatus } from '../shared/challenge.js';
 import type {
+  ChallengeInfo,
   GameSettings,
   Phase,
   PlayerInfo,
@@ -16,6 +18,8 @@ export interface RoomModel {
   phase: Phase;
   settings: GameSettings;
   players: PlayerInfo[];
+  /** Set when this room is a weekly challenge attempt. */
+  challenge: ChallengeInfo | null;
 }
 
 export interface RoundModel {
@@ -50,6 +54,10 @@ export interface Model {
 export interface Actions {
   create(name: string): void;
   join(code: string, name: string): void;
+  /** Play (or resume) this week's challenge. */
+  challenge(name: string): void;
+  /** The home card's numbers; null when the server cannot be reached. */
+  challengeStatus(): Promise<ChallengeStatus | null>;
   start(): void;
   setSettings(patch: Partial<GameSettings>): void;
   pick(hex: string): boolean;

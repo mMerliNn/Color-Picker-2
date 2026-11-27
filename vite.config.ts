@@ -1,8 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
-// In dev, serve /stats and /stats/<mode> from stats.html (in production the game
-// server does this). The page itself sends an unknown mode back to /stats.
+// In dev, serve /stats and /stats/<mode> from stats.html, and /challenge from
+// challenge.html (in production the game server does this). The stats page
+// itself sends an unknown mode back to /stats.
 function statsRoute(): Plugin {
   return {
     name: 'stats-route',
@@ -10,6 +11,9 @@ function statsRoute(): Plugin {
       server.middlewares.use((req, _res, next) => {
         const m = req.url ? /^\/stats(?:\/[a-z0-9-]+)?\/?(\?.*)?$/.exec(req.url) : null;
         if (m) req.url = `/stats.html${m[1] ?? ''}`;
+        // The weekly challenge's leaderboard page.
+        const c = req.url ? /^\/challenge\/?(\?.*)?$/.exec(req.url) : null;
+        if (c) req.url = `/challenge.html${c[1] ?? ''}`;
         next();
       });
     },
@@ -29,6 +33,7 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL('./src/client/index.html', import.meta.url)),
         stats: fileURLToPath(new URL('./src/client/stats.html', import.meta.url)),
+        challenge: fileURLToPath(new URL('./src/client/challenge.html', import.meta.url)),
       },
     },
   },

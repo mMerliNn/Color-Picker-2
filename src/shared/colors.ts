@@ -63,6 +63,85 @@ export function generateColors(seed: number, count: number): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Weekly challenge: the same kind of colors, but leaning toward hard ones
+// ---------------------------------------------------------------------------
+
+/** How hard a target color is to match, relative to an average color (1 = average, 1.3 = 30% bigger errors). */
+export type DifficultyFn = (lch: { l: number; c: number; h: number | null }) => number;
+
+/** The range challenge colors (and normal games) are drawn from. */
+export const COLOR_L_RANGE = [30, 85] as const;
+export const COLOR_C_RANGE = [18, 75] as const;
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+
+/**
+ * What makes a color hard to match with this game's picker, before there is
+ * enough data to measure it (see src/server/difficulty.ts, which mixes in the
+ * real errors as they come in). Relative weights only; 1 is about average.
+ * - Muted colors: the picker's low-saturation edge is a thin strip where a small
+ *   move swings the hue, and people reliably pick muted colors too vivid.
+ * - Dark colors: the dark part of the picker packs many colors into a few
+ *   pixels, and screens differ most in the shadows.
+ * - Browns and olives (orange to yellow-green hues, not light): colors that
+ *   have no name of their own on the hue slider, so they are easy to misjudge.
+ */
+export const PRIOR_DIFFICULTY: DifficultyFn = ({ l, c, h }) => {
+  const muted = 1 - clamp01((c - COLOR_C_RANGE[0]) / (COLOR_C_RANGE[1] - COLOR_C_RANGE[0]));
+  const dark = 1 - clamp01((l - COLOR_L_RANGE[0]) / (COLOR_L_RANGE[1] - COLOR_L_RANGE[0]));
+  const brownOlive = h !== null && h >= 45 && h <= 115 && l < 62 ? 1 : 0;
+  return 0.7 + 0.45 * muted + 0.25 * dark + 0.15 * brownOlive;
+};
+
+/**
+ * How strongly the weekly challenge favors hard colors: a candidate's chance is
+ * proportional to its difficulty to this power. At 6, a color 30% harder than
+ * another is almost 5 times as likely to be chosen; 0 would ignore difficulty.
+ */
+export const CHALLENGE_SHARPNESS = 6;
+
+/**
+ * The weekly challenge's colors. Like generateColors, every color gets its own
+ * hue sector, so the whole wheel is covered; it also gets its own lightness
+ * band, so a week is never all dark colors even when dark is hardest. Inside
+ * those, `candidates` colors are drawn and one is chosen, favoring the hard
+ * ones (chance proportional to difficulty^CHALLENGE_SHARPNESS), so hard colors
+ * come up much more often without every week looking the same. The same seed
+ * and difficulty always give the same colors.
+ */
+export function generateChallengeColors(
+  seed: number,
+  count: number,
+  difficulty: DifficultyFn = PRIOR_DIFFICULTY,
+  sharpness = CHALLENGE_SHARPNESS,
+  candidates = 16,
+): string[] {
+  const rand = mulberry32(seed);
+  const hueSectors = shuffleInPlace(Array.from({ length: count }, (_, i) => i), rand);
+  const lightBands = shuffleInPlace(Array.from({ length: count }, (_, i) => i), rand);
+  const [lMin, lMax] = COLOR_L_RANGE;
+  const [cMin, cMax] = COLOR_C_RANGE;
+  return hueSectors.map((sector, i) => {
+    const band = lightBands[i] as number;
+    const options: { hex: string; weight: number }[] = [];
+    for (let k = 0; k < candidates; k++) {
+      const hue = (sector + rand()) * (360 / count);
+      const lightness = lMin + (band + rand()) * ((lMax - lMin) / count);
+      const hex = inGamutHex(lightness, cMin + rand() * (cMax - cMin), hue);
+      // Judge the color as it will be shown (its chroma may have been cut to fit the screen).
+      const d = Math.max(0.01, difficulty(toLch(hex)));
+      options.push({ hex, weight: d ** sharpness });
+    }
+    let r = rand() * options.reduce((sum, o) => sum + o.weight, 0);
+    for (const o of options) {
+      r -= o.weight;
+      if (r <= 0) return o.hex;
+    }
+    return (options.at(-1) as { hex: string }).hex;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Grayscale modes: grays on a 0-100 lightness scale (CIE L*: 0 is black, 100
 // white, and 50 the gray that looks halfway, not #808080, which looks like 54)
 // ---------------------------------------------------------------------------

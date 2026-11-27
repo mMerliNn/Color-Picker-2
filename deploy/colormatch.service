@@ -17,6 +17,9 @@ Environment=STATIC_DIR=/opt/colormatch/dist/client
 Environment=DB_FILE=/var/lib/colormatch/colormatch.db
 # Only accept websocket connections coming from your own site:
 Environment=ALLOWED_ORIGINS=https://colorpick.fun
+# Weekly challenge (optional). Without CHALLENGE_SECRET a secret key is made once
+# and kept in the database.
+#Environment=CHALLENGE_SECRET=
 
 # Runs as a throwaway, unprivileged user. StateDirectory creates
 # /var/lib/colormatch for it: the only place it may write (the SQLite database).
