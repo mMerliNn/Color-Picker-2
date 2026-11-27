@@ -171,7 +171,7 @@ function challengeCard(ctx: Ctx, needName: () => string | null): { el: HTMLEleme
     const w = st.week;
     setText(week, `Week ${w.number}`);
     setText(meta, `Ends in ${timeLeft(w.endsAt - st.serverNow)} · ${playersText(w.players)}`);
-    setText(rules, `${w.rounds} colors, ${w.roundSeconds} s each. One try: it counts from the moment the first color appears.`);
+    setText(rules, `${w.rounds} colors, ${w.roundSeconds} s each. One try per browser: it counts from the moment the first color appears.`);
     const me = st.you;
     playBtn.hidden = me !== null && !me.inProgress;
     setText(playBtn, me?.inProgress ? 'Resume' : 'Play');
