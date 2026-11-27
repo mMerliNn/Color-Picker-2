@@ -210,7 +210,7 @@ function challengeCard(ctx: Ctx, needName: () => string | null): { el: HTMLEleme
   const el = h(
     'section',
     { class: 'card challenge-card', 'aria-labelledby': 'challenge-title' },
-    h('div', { class: 'challenge-head' }, h('h2', { id: 'challenge-title' }, 'Weekly challenge'), week),
+    h('div', { class: 'challenge-head' }, h('h2', { id: 'challenge-title' }, 'Weekly challenge (beta ver.)'), week),
     meta,
     rules,
     you,
